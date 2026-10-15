@@ -6,7 +6,7 @@ UAV＋UGV同world、不同动作/观测维度的使用方式见 [异构IPPO示�
 
 局部actor＋集中critic的合作训练见 [MAPPO示例](examples/cooperative_mappo/README.md)：支持同role参数共享开关、GRU/LSTM、显式world team reward和Task学习边界。[M2.2验收报告](docs/validation/m2-mappo.md)记录真实GPU与HTTP恢复证据。
 
-完整motion／RF功率／频道混合学习见[ISAC＋cost](examples/isac_cost/README.md)；有限历史与隐藏干扰对照见[history＋Markov](examples/hybrid_history_markov/README.md)。两例沿同一HTTP/Worker/checkpoint路径，固定预算试验由`examples/reference_benchmark.py`执行。
+M4.3三参考场景已完成工程交付：[普通飞行](examples/basic_flight/README.md)、[ISAC＋cost](examples/isac_cost/README.md)、[history＋Markov](examples/hybrid_history_markov/README.md)，沿同一HTTP/Worker/checkpoint路径。混合动作和历史机制、真实训练／恢复／冻结评价已验证；ISAC策略仍未达到无飞行失败要求，完整学习对照矩阵未完成。2026-10-16经用户确认，学习优化与剩余效果验证转入后续研究／M6，状态见[交付记录](docs/validation/m4-reference-scenarios.md)。`examples/reference_benchmark.py`保留为可选研究矩阵入口。
 
 M2跨阶段审查的四项问题已完成有限修复，当前配置及学习state快照契约见 [收口验收报告](docs/validation/m2-complexity-cleanup.md)。
 

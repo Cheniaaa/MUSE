@@ -3,6 +3,12 @@
 两架Crazyflie分别属于`alpha/beta`，联合学习4维motion、RF功率和频道`[7,-3]`。
 使用`builtin:mappo`，每role独立actor29维，集中critic58维；actor只读自身导航、上次motion、剩余时间、所选链路反馈和本地path-length测量。station坐标是已知导航目标，不向actor暴露感知target真值、FIM或位置界。
 
+## 交付状态
+
+2026-10-16完成M4.3工程收口：混合动作／cost真实参与学习、规则可行性、HTTP训练／恢复／冻结评价通过；**学习策略的任务效果未达标**。既有seed7的cost-on/off最终策略分别403／368步失败；另行验证gamma=1、budget25后仍在330步失败，未通过后续配对门槛。示例默认仍为原gamma=.99配置。
+
+原90Run矩阵保留15完成／1取消／74未开始。用户已确认将飞行安全学习、完整cost-on/off及MAPPO/IPPO效果对照转入后续研究／M6。机制通过不表示策略收敛，详见本地[交付记录](../../docs/validation/m4-reference-scenarios.md)与[全时域验证](../../docs/validation/m4-full-horizon-pilot.md)。
+
 ## 注册与运行
 
 在项目根执行（不新增依赖）：
@@ -20,9 +26,9 @@ python -m muse_server.app --port 8001 --data-dir build/reference-server --contro
 
 运行默认不打开显示；`preview.world_ids=[0]`只是预览配置，训练时不发启用显示请求。学习EVALUATE需使用已登记checkpoint，通过同一接口仅修改B/root_seed；不直接用未初始化的学习策略做规则基线。
 
-请求固定B16/root_seed7、H32、MLP[64,64]、gamma=.99；4096 decision对应128次update、65536 world transitions。有限试验用seed7/17/27，不因结果欠佳自动扩训；初始化checkpoint、恢复、独立seed101/211评价沿正式API。此包本身不声明训练达标。
+请求固定B16/root_seed7、H32、MLP[64,64]、gamma=.99；4096 decision对应128次update、65536 world transitions。原预注册研究矩阵使用seed7/17/27；初始化checkpoint、恢复、独立seed101/211评价沿正式API。剩余矩阵的后续执行需重新确认研究协议与预算，此包本身不声明训练达标。
 
-启动Server后，在另一终端执行完整固定对照（输出目录必须是新目录）：
+完整固定对照作为可选研究入口保留。以下命令启动一批新的90Run试验，使用新的输出目录：
 
 ```bash
 source /project/mjc_ws/.myenv/bin/activate

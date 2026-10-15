@@ -3,6 +3,7 @@
 此目录提供普通飞行规则 `EVALUATE` 和真实 IPPO `TRAIN` 的环境包、训练包和请求，不是独立运行器。
 M1已贯通CPU资源注册、真实Warp/IPPO、正式API生命周期及浏览器Viser；完整证据见`docs/validation/m1-browser.md`。
 算法接入与复杂度收口结果见`docs/validation/m1-complexity-cleanup.md`；平台更新后使用新的data-dir注册本版资源。
+本例同时作为M4.3普通飞行参考，扩展后的motion-only真实学习回归已通过；三场景工程交付与研究效果状态见[交付记录](../../docs/validation/m4-reference-scenarios.md)。
 `controller.json` 是T2已验证的唯一配置来源。学习策略 EVALUATE / INTERACTIVE 使用已登记 checkpoint；规则策略无需 checkpoint。INTERACTIVE 已支持冻结策略的暂停、继续、单步和指定 world reset，操作方式见下文。
 
 ## 运行入口
@@ -21,7 +22,7 @@ source /project/mjc_ws/.myenv/bin/activate
 python examples/basic_flight/submit.py --server http://127.0.0.1:8001 --mode TRAIN --max-decision-steps 2400
 ```
 
-输出Run ID与实际Viser URL。API文档为`http://127.0.0.1:8001/docs`；取消用`POST /runs/{run_id}/cancel`，显示开关用`PATCH /runs/{run_id}/display`。Run结束自动关闭显示；重新提交生成新会话。规则飞行用`--mode EVALUATE`；`--no-display`为headless。TRAIN总步数须为H的整数倍，默认H=24；episode长度500与Run总预算独立。
+输出Run ID与实际Viser URL。API文档为`http://127.0.0.1:8001/docs`；取消用`POST /runs/{run_id}/cancel`，显示开关用`PATCH /runs/{run_id}/display`。Run结束自动关闭显示；重新提交生成新会话。规则飞行用`--mode EVALUATE`；`--no-display`为headless。TRAIN总步数接受正整数，每完整H步才更新，默认H=24；episode长度500与Run总预算独立。
 
 ```bash
 uv pip install --require-hashes -r requirements.lock --python .myenv/bin/python
@@ -52,7 +53,7 @@ progress按selection独立持有历史，另有低权重distance奖励约束停�
 | Run/driver `max_decision_steps` | 建议24,000 decision，即1,000次update | 8 decision，即2次update |
 
 `max_decision_steps` 是一次 Run 的决策步数上限：每次同时推进全部 world，不乘 world 数，也不计内部物理子步。`episode_max_steps` 是每个 world 的回合最大决策步数，碰撞等条件可以提前结束回合。`collection_steps` 是每次算法更新前的采样步数 H。
-总Run预算不放algorithm config，也不能用episode上限代替。正式API要求TRAIN预算为H的整数倍；取消可在半block停止，未满H的数据不更新。
+总Run预算不放algorithm config，也不能用episode上限代替。正式API接受正整数TRAIN预算；正常结束或取消时未满H的数据不更新，也不进入checkpoint，恢复从新episode开始。
 
 创建 Run 的请求示例（`experiment_id` 使用已保存实验的实际ID）：
 
