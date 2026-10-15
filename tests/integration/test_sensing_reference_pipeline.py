@@ -141,7 +141,7 @@ def test_generalized_worlds_targets_bistatic_and_resource_descriptor(tmp_path):
     assert exp.network.sensing_count == 4 and len(exp.network.resources) == 3
     assert [resource.channel_id for resource in exp.network.resources] == [19, 7, -3]
     assert exp.model_bindings['sensing'].descriptor.output_spec.fim.shape == ['B', 'S', 'F', 2, 2]
-    from examples.sensing_reference.training_package.terms import LocalPathLengthObservation
+    from muse_builtins.wireless_terms import LocalPathLengthObservation
     from types import SimpleNamespace
     env = SimpleNamespace(experiment=exp, device='cpu')
     cfg = SimpleNamespace(params=dict(role_id='alpha', sensing_id='alpha_probe', range_scale_m=100.))

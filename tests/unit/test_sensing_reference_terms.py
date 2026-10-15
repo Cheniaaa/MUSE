@@ -29,7 +29,7 @@ def term_env():
 
 @pytest.mark.parametrize('slots,order', [([0, 1], [0, 1]), ([1, 0], [1, 0])])
 def test_local_measurement_slot_resource_window_and_truth_isolation(slots, order):
-    from examples.sensing_reference.training_package.terms import LocalPathLengthObservation
+    from muse_builtins.wireless_terms import LocalPathLengthObservation
     env = term_env()
     env.experiment.bindings['observer'].role_slot_to_group_slot = slots
     cfg = SimpleNamespace(params=dict(role_id='observer', sensing_id='local', range_scale_m=100.))
@@ -48,7 +48,7 @@ def test_local_measurement_slot_resource_window_and_truth_isolation(slots, order
 
 @pytest.mark.parametrize('sensing_id', ['missing', 'other'])
 def test_local_term_rejects_missing_or_ambiguous_slot_relation(sensing_id):
-    from examples.sensing_reference.training_package.terms import LocalPathLengthObservation
+    from muse_builtins.wireless_terms import LocalPathLengthObservation
     env = term_env()
     if sensing_id == 'other':
         layout = env.experiment.geometry.layout
@@ -60,7 +60,7 @@ def test_local_term_rejects_missing_or_ambiguous_slot_relation(sensing_id):
 
 
 def test_position_bound_per_target_valid_rank_and_no_cross_target_information():
-    from examples.sensing_reference.training_package.terms import PositionBoundViolation
+    from muse_builtins.wireless_terms import PositionBoundViolation
     env = term_env()
     matrices = torch.zeros(4, 4, 2, 2, 2, dtype=torch.float64)
     # 每个target的两条关系各贡献一条正交rank1；不能跨target补rank。
@@ -80,7 +80,7 @@ def test_position_bound_per_target_valid_rank_and_no_cross_target_information():
 
 @pytest.mark.parametrize('scale', [1e-100, 1., 1e100])
 def test_position_bound_relative_rank_threshold(scale):
-    from examples.sensing_reference.training_package.terms import PositionBoundViolation
+    from muse_builtins.wireless_terms import PositionBoundViolation
     env = term_env()
     data = torch.zeros(2, 4, 1, 2, 2, dtype=torch.float64)
     eps = torch.finfo(torch.float64).eps
@@ -149,7 +149,7 @@ def test_native_managers_construct_call_and_reset_stateless_terms():
     from mjlab.managers.observation_manager import ObservationGroupCfg
     from muse_runtime.managers import (CheckedObservationManager, CheckedObservationTermCfg,
                                        CostTermCfg, WorldCostManager)
-    from examples.sensing_reference.training_package.terms import LocalPathLengthObservation, PositionBoundViolation
+    from muse_builtins.wireless_terms import LocalPathLengthObservation, PositionBoundViolation
     env = term_env()
     env.num_envs = 1
     observation = CheckedObservationManager({'local': ObservationGroupCfg(terms={

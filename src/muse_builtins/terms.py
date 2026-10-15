@@ -225,4 +225,6 @@ def registrations():
                   tensor=tensor_spec(['B', 'N_group', *([1] if field == 'data' else [])],
                                      units, dtype=dtype)),),
             tensor_spec(['B', 'N_role', 1], units))
+    from .wireless_terms import registrations as wireless_registrations
+    result.update(wireless_registrations())
     return result

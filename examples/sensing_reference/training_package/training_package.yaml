@@ -25,15 +25,15 @@ agent_roles:
     entity_kind: aerial_vehicle
     action_interfaces: {motion: body_velocity, radio: power_channel}
     observation_terms:
-      - {selection_id: measurement, term: local_path_length, config: {sensing_id: alpha_probe, range_scale_m: 100}}
+      - {selection_id: measurement, term: 'builtin:local_path_length', config: {sensing_id: alpha_probe, range_scale_m: 100}}
   beta:
     entity_kind: aerial_vehicle
     action_interfaces: {motion: body_velocity, radio: power_channel}
     observation_terms:
-      - {selection_id: measurement, term: local_path_length, config: {sensing_id: beta_probe, range_scale_m: 100}}
+      - {selection_id: measurement, term: 'builtin:local_path_length', config: {sensing_id: beta_probe, range_scale_m: 100}}
 world_reward_terms:
   - {selection_id: rate, term: radio_rate}
 world_cost_terms:
-  - {selection_id: position_bound, term: position_bound_violation, config: {position_bound_limit_m: 0.25}}
+  - {selection_id: position_bound, term: 'builtin:position_bound_violation', config: {position_bound_limit_m: 0.25}}
 world_termination_terms:
   - {selection_id: episode_limit, term: 'builtin:timeout', config: {episode_max_steps: 500}}
