@@ -15,6 +15,7 @@ class ResolvedSelection(DataModel):
     config: dict
     weight: float | None
     binding_role_id: str | None
+    history_length: int = Field(default=0, ge=0)
 
 
 class ResolvedPackageSelection(DataModel):

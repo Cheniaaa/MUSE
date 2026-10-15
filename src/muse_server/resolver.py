@@ -24,6 +24,7 @@ class SelectionOverride(DataModel):
     enabled: bool | None = None
     config: dict = Field(default_factory=dict)
     weight: float | None = None
+    history_length: int | None = Field(default=None, ge=0)
 
 
 def _overrides(request: dict, allowed: dict, path=()) -> dict:
@@ -36,7 +37,7 @@ def _overrides(request: dict, allowed: dict, path=()) -> dict:
             raise ConfigError('.'.join(current), 'Unknown selection identity')
         if allowed[key] is None:
             override = SelectionOverride.model_validate(value)
-            for field in ('enabled', 'weight'):
+            for field in ('enabled', 'weight', 'history_length'):
                 if field in override.model_fields_set and getattr(override, field) is None:
                     raise ConfigError('.'.join((*current, field)), 'Explicit null is not allowed')
             if 'role_id' in override.config:
@@ -73,6 +74,8 @@ def resolve_package_selections(descriptor: PackageDescriptor, term_config: dict,
                 raise ConfigError('.'.join(identity), 'Required selection cannot be disabled')
             if kind != 'reward' and 'weight' in override.model_fields_set:
                 raise ConfigError('.'.join(identity), 'Only rewards accept weight')
+            if kind != 'observation' and 'history_length' in override.model_fields_set:
+                raise ConfigError('.'.join(identity), 'Only observations accept history_length')
             weight = None
             if kind == 'reward':
                 weight = override.weight if override.weight is not None else (selection.weight if selection.weight is not None else 1.0)
@@ -96,6 +99,7 @@ def resolve_package_selections(descriptor: PackageDescriptor, term_config: dict,
             output.append(ResolvedSelection(
                 owner_path=owner, term_kind=kind, selection_id=selection.selection_id,
                 term=selection.term, enabled=enabled, config=config, weight=weight, binding_role_id=role,
+                history_length=selection.history_length if override.history_length is None else override.history_length,
             ))
     return ResolvedPackageSelection(package_hash=descriptor.package_hash, selections=tuple(output),
                                     termination_reasons=reasons, required_inputs=tuple(deepcopy(inputs)))
@@ -493,6 +497,8 @@ def _resolve_flight(data, snapshot):
         term = _reference(selection.term, descriptor.terms, 'term', builtins.descriptor.terms)
         role = selection.binding_role_id
         output = _tensor(term.output_spec, batch, bindings[role].role_slot_count if role else None, axes=axes)
+        if selection.history_length:
+            output.shape.insert(2 if role is not None else 1, selection.history_length)
         path = (['observations', 'actors', selection.owner_path[1], selection.selection_id]
                 if selection.owner_path[0] == 'roles' else
                 ['observations', 'critic_inputs', selection.owner_path[1], selection.selection_id])

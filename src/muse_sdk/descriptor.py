@@ -220,12 +220,13 @@ class TermSelection(DataModel):
     config: dict = Field(default_factory=dict)
     weight: float | None = None
     role_id: str | None = None
+    history_length: int = Field(default=0, ge=0)
 
     @model_serializer(mode='wrap')
     def serialize_selection(self, handler):
         data = handler(self)
         # 省略未声明字段，不能把absence在JSON边界变成显式null。
-        for key in ('weight', 'role_id'):
+        for key in ('weight', 'role_id', 'history_length'):
             if key not in self.model_fields_set:
                 data.pop(key, None)
         return data
@@ -328,6 +329,8 @@ def validate_composition(descriptor: PackageDescriptor, builtin_catalog: Package
                 raise ConfigError(field, 'Required selection must be enabled by default')
             if kind != 'reward' and 'weight' in selection.model_fields_set:
                 raise ConfigError(field, 'Only reward selections accept weight')
+            if kind != 'observation' and 'history_length' in selection.model_fields_set:
+                raise ConfigError(field, 'Only observation selections accept history_length')
             if kind == 'reward' and 'weight' in selection.model_fields_set and selection.weight is None:
                 raise ConfigError(field, 'Reward weight cannot be null')
             if 'role_id' in selection.config:

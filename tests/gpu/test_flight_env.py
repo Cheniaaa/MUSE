@@ -16,7 +16,7 @@ def flight_plan(tmp_path_factory):
     return build_plan(tmp_path_factory.mktemp('flight-env'))
 
 
-def build_plan(root, progress=False, shared_group=False, worlds=2):
+def build_plan(root, progress=False, shared_group=False, worlds=2, history=0):
     from muse_builtins.metadata import export_metadata
     from muse_server.catalog import Catalog
     from muse_server.resolver import resolve_experiment
@@ -48,6 +48,9 @@ def build_plan(root, progress=False, shared_group=False, worlds=2):
         resources[kind] = catalog.register_archive(kind, archive)
     request = json.loads((EXAMPLE / 'request.json').read_text())
     request['topology']['world_count'] = worlds
+    if history:
+        request['term_config'] = {'roles': {role: {'observation': {'target': {'history_length': history}}}
+                                          for role in request['role_config']}}
     if shared_group:
         scout, guard = request['scenario']['entity_groups']
         scout['count'] = 3
@@ -345,17 +348,10 @@ def test_substep_nonfinite_is_not_hidden_by_timeout_reset(flight_env, monkeypatc
     env.reset(torch.ones(2, dtype=torch.bool, device=env.device))
 
 
-def test_native_history_subset_and_all_physics_addresses(flight_plan, gpu_stream, monkeypatch):
-    from mjlab.managers.observation_manager import ObservationManager
+def test_native_history_subset_and_all_physics_addresses(tmp_path, gpu_stream):
     from muse_runtime.env import MuseEnv, RuntimeContext
     from muse_runtime.rng import WorldRng
-    original = ObservationManager.__init__
-    def configured(manager, cfg, env):
-        for group in cfg.values():
-            group.history_length = 3
-            group.flatten_history_dim = False
-        original(manager, cfg, env)
-    monkeypatch.setattr(ObservationManager, '__init__', configured)
+    flight_plan = build_plan(tmp_path, history=3)
     cpu_rng = torch.random.get_rng_state().clone()
     gpu_rng = torch.cuda.get_rng_state().clone()
     env = MuseEnv(flight_plan.experiment, RuntimeContext('cuda:0', flight_plan.resource_paths, {}), WorldRng(1, 2, 'cuda:0'))

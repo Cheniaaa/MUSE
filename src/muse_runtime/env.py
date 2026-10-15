@@ -131,6 +131,7 @@ class MuseEnv(ManagerBasedRlEnv):
             self._check_task_fields()
         observations, rewards, world_rewards, costs, cost_roles, world_costs, roles, terminations = {}, {}, {}, {}, {}, {}, {}, {}
         self._observation_owners = {}
+        self._role_observation_history = set()
         self._termination_selections = []
         for selection in self.experiment.selections:
             if not selection.enabled:
@@ -146,7 +147,10 @@ class MuseEnv(ManagerBasedRlEnv):
                 self._observation_owners[group] = owner
                 observations.setdefault(group, ObservationGroupCfg(terms={}, concatenate_terms=False, nan_policy='error'))
                 observations[group].terms[selection.selection_id] = CheckedObservationTermCfg(func=func, params=params,
+                    history_length=selection.history_length, flatten_history_dim=False,
                     output_shape=tuple(selection.output_spec.shape), output_dtype=getattr(torch, selection.output_spec.dtype))
+                if selection.history_length and selection.binding_role_id is not None:
+                    self._role_observation_history.add((group, selection.selection_id))
             elif selection.term_kind == 'reward':
                 cfg = RewardTermCfg(func=func, params=params, weight=selection.weight)
                 if selection.binding_role_id is None:
@@ -234,6 +238,8 @@ class MuseEnv(ManagerBasedRlEnv):
         actors, critic = {}, {}
         for group, fields in computed.items():
             owner = self._observation_owners[group]
+            fields = {name: value.transpose(1, 2) if (group, name) in self._role_observation_history else value
+                      for name, value in fields.items()}
             (actors if owner[0] == 'roles' else critic)[owner[1]] = fields
         self.observations = Observations(actors, critic)
         return self.observations
