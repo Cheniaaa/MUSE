@@ -1,0 +1,11 @@
+# 项目排除路径
+/.myenv/
+/.planning/
+/.pytest_cache/
+/build/
+/docs/
+/spikes/
+/src/muse.egg-info/
+/AGENTS.md
+/MUJOCO_LOG.TXT
+__pycache__/
