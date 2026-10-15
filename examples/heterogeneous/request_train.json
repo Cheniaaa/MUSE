@@ -1,0 +1,27 @@
+{
+  "environment_id": "REPLACE_WITH_REGISTERED_ENVIRONMENT_ID",
+  "environment_revision": 1,
+  "training_package_id": "REPLACE_WITH_REGISTERED_IPPO_PACKAGE_ID",
+  "training_package_revision": 1,
+  "scenario": {
+    "entity_groups": [
+      {"group_id": "scout_group", "model_id": "bitcraze_crazyflie_2", "model_revision": 1, "count": 1, "placement_id": "scout_start", "controller_id": "cf2_body_velocity_v1", "sensor_profile_id": "none"},
+      {"group_id": "rover_group", "model_id": "ugv_diff_drive", "model_revision": 1, "count": 1, "placement_id": "rover_start", "controller_id": "diff_drive_controller", "sensor_profile_id": "none"}
+    ],
+    "placements": {
+      "scout_start": [{"position": [0.0, 1.0, 1.0], "orientation_wxyz": [1.0, 0.0, 0.0, 0.0]}],
+      "rover_start": [{"position": [0.0, 0.0, 0.03], "orientation_wxyz": [1.0, 0.0, 0.0, 0.0]}]
+    },
+    "scene": {"physics_dt": 0.002, "control_substeps": 20, "integrator": "RK4", "density": 1.225, "viscosity": 0.000018, "precision": "float32"},
+    "command_targets_world": {"scout": [[0.2, 1.0, 1.1]], "rover": [[0.2, 0.0, 0.03]]}
+  },
+  "task_id": null,
+  "algorithm_id": "builtin:ippo",
+  "role_config": {"scout": {"group_id": "scout_group", "slots": [0]}, "rover": {"group_id": "rover_group", "slots": [0]}},
+  "term_config": {},
+  "model_config": {},
+  "algorithm_config": {},
+  "topology": {"world_count": 2},
+  "root_seed": 7,
+  "preview": {"world_ids": [0], "rate_hz": 10}
+}

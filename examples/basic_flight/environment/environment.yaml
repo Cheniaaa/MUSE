@@ -1,0 +1,4 @@
+scene: scene/scene.mjcf
+metadata:
+  name: basic_flight_ground
+  frame: world_z_up

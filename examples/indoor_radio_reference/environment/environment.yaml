@@ -1,0 +1,3 @@
+scene: scene.xml
+rf_geometry:
+  rf_blocking: [wall]

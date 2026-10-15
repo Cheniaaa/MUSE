@@ -1,0 +1,44 @@
+{
+  "environment_id": "REPLACE_WITH_REGISTERED_ENVIRONMENT_ID", "environment_revision": 1,
+  "training_package_id": "REPLACE_WITH_REGISTERED_PACKAGE_ID", "training_package_revision": 1,
+  "scenario": {
+    "entity_groups": [
+      {"group_id": "uav_group", "model_id": "bitcraze_crazyflie_2", "model_revision": 1, "count": 2, "placement_id": "uav_start", "controller_id": "cf2_body_velocity_v1", "sensor_profile_id": "none"},
+      {"group_id": "anchor_group", "model_id": "radio_base_station", "model_revision": 1, "count": 2, "placement_id": "anchor_start", "controller_id": "none", "sensor_profile_id": "none"}
+    ],
+    "placements": {
+      "uav_start": [{"position": [0, -0.3, 1], "orientation_wxyz": [1, 0, 0, 0]}, {"position": [0, -5, 1], "orientation_wxyz": [1, 0, 0, 0]}],
+      "anchor_start": [{"position": [20, 0, 3], "orientation_wxyz": [1, 0, 0, 0]}, {"position": [10, 8, 1], "orientation_wxyz": [1, 0, 0, 0]}]
+    },
+    "scene": {"physics_dt": 0.002, "control_substeps": 20, "integrator": "RK4", "density": 1.225, "viscosity": 0.000018, "precision": "float32"},
+    "command_targets_world": {"pilot": [[0, 3, 1], [0, -1, 1]]},
+    "radio_geometry": {
+      "endpoints": {
+        "uavs": {"group_id": "uav_group", "slots": [0, 1], "device_id": "ideal_point_radio"},
+        "station": {"group_id": "anchor_group", "slots": [0], "device_id": "ideal_point_radio"},
+        "jammer": {"group_id": "anchor_group", "slots": [1], "device_id": "ideal_point_radio"}
+      },
+      "links": [{"link_id": "up", "tx": "uavs", "rx": "station"}]
+    },
+    "network": {
+      "resources": [
+        {"resource_id": "band_a", "channel_id": 7, "center_frequency_hz": 2412000000, "bandwidth_hz": 5000000, "sharing": "reuse"},
+        {"resource_id": "band_b", "channel_id": -3, "center_frequency_hz": 2437000000, "bandwidth_hz": 5000000, "sharing": "reuse"}
+      ],
+      "epoch_max_ticks": 7,
+      "endpoint_limits": {
+        "uavs": {"resource_ids": ["band_a", "band_b"], "max_power_w": 0.001},
+        "station": {"resource_ids": ["band_a", "band_b"], "max_power_w": 0.001},
+        "jammer": {"resource_ids": ["band_a", "band_b"], "max_power_w": 0.001}
+      },
+      "role_controls": {"pilot": "uavs"}, "passive_endpoints": ["station"],
+      "background_emitters": [{"emitter_id": "noise", "endpoints": ["jammer"], "behavior": "fixed", "config": {"active": [true], "power_w": [0.001], "channel_id": [7]}}],
+      "communication_allocations": [{"link_id": "up", "resource_ids": ["band_a", "band_b"]}], "services": []
+    }
+  },
+  "task_id": null, "algorithm_id": "indoor_radio_rule",
+  "role_config": {"pilot": {"group_id": "uav_group", "slots": [0, 1]}},
+  "term_config": {}, "model_config": {"radio": {"receiver_noise_temperature_k": 290, "receiver_noise_figure_db": 7}},
+  "algorithm_config": {}, "topology": {"world_count": 2}, "root_seed": 7,
+  "preview": {"world_ids": [0], "rate_hz": 10}
+}

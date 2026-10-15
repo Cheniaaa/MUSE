@@ -1,0 +1,7 @@
+<mujoco model="sensing_reference">
+  <worldbody>
+    <light pos="4 0 12"/>
+    <geom name="floor" type="plane" size="15 15 .1" rgba=".3 .35 .4 1"/>
+    <geom name="blocker" type="box" size=".1 .05 .5" pos="20 20 .5" rgba=".6 .55 .5 1"/>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,31 @@
+algorithm: cpu_rule
+agent_roles:
+  scout:
+    entity_kind: aerial_vehicle
+    action_interfaces: {motion: body_velocity}
+    reward_terms:
+      - selection_id: progress
+        term: progress
+        required: true
+        weight: 1.0
+        config: {scale: 2.0}
+      - selection_id: progress_aux
+        term: progress
+        default_enabled: false
+  guard:
+    entity_kind: aerial_vehicle
+    action_interfaces: {motion: body_velocity}
+    reward_terms:
+      - selection_id: progress
+        term: progress
+        required: true
+        weight: 0.5
+        config: {scale: 1.0}
+world_termination_terms:
+  - selection_id: collision
+    term: collision
+    required: true
+  - selection_id: deadline
+    term: time_limit
+    default_enabled: false
+    config: {episode_max_steps: 4}

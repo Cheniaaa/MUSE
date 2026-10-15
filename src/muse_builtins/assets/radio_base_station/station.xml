@@ -1,0 +1,9 @@
+<mujoco model="radio_base_station">
+  <worldbody>
+    <body name="station">
+      <!-- 固定端点的显示标记；尺寸不代表设备外壳或RF几何。 -->
+      <geom name="marker" type="sphere" size="0.1" rgba="0.15 0.5 0.95 1"
+            contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

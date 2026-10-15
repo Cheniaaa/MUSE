@@ -1,0 +1,39 @@
+algorithm: builtin:constant_velocity
+algorithm_config:
+  motion: [0.05, 0.0, 0.0, 0.0]
+agent_roles:
+  scout:
+    entity_kind: aerial_vehicle
+    action_interfaces: {motion: body_velocity}
+    observation_terms:
+      - {selection_id: target, term: 'builtin:relative_target', required: true}
+    reward_terms:
+      - selection_id: distance
+        term: builtin:distance
+        required: true
+        weight: 1.0
+        config: {scale: 2.0}
+  guard:
+    entity_kind: aerial_vehicle
+    action_interfaces: {motion: body_velocity}
+    observation_terms:
+      - {selection_id: target, term: 'builtin:relative_target', required: true}
+    reward_terms:
+      - selection_id: distance
+        term: builtin:distance
+        required: true
+        weight: 0.5
+        config: {scale: 1.0}
+world_termination_terms:
+  - selection_id: scout_collision
+    term: builtin:collision
+    required: true
+    config: {controlled_role: scout}
+  - selection_id: guard_collision
+    term: builtin:collision
+    required: true
+    config: {controlled_role: guard}
+  - selection_id: episode_limit
+    term: builtin:timeout
+    required: true
+    config: {episode_max_steps: 500}

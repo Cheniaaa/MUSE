@@ -1,0 +1,218 @@
+"""CPU-only Run控制与事件线格式。"""
+from typing import Literal
+import socket
+import struct
+
+from pydantic import Field, field_validator, model_validator
+
+from .config import DataModel, check_json
+
+
+class RunTimeouts(DataModel):
+    startup: float = Field(default=60., gt=0)
+    compile: float = Field(default=300., gt=0)
+    heartbeat: float = Field(default=30., gt=0)
+    heartbeat_interval: float = Field(default=1., gt=0)
+    cancel: float = Field(default=5., gt=0)
+    stop: float = Field(default=5., gt=0)
+
+    @model_validator(mode='after')
+    def heartbeat_deadline(self):
+        if self.heartbeat <= self.heartbeat_interval:
+            raise ValueError('heartbeat timeout must exceed heartbeat_interval')
+        return self
+
+
+class InteractiveCommand(DataModel):
+    command_seq: int = Field(gt=0, strict=True)
+    command: Literal['pause', 'resume', 'step', 'reset_world']
+    world_id: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode='after')
+    def command_target(self):
+        if (self.command == 'reset_world') != (self.world_id is not None):
+            raise ValueError('Only reset_world requires world_id; other commands forbid it')
+        return self
+
+
+class CommandResult(InteractiveCommand):
+    status: Literal['applied', 'rejected']
+    paused: bool
+    steps: int
+    updates: int
+    error: str | None = None
+
+
+class WorkerEvent(DataModel):
+    event_seq: int = Field(gt=0)
+    run_id: str
+    kind: Literal['preparing', 'compiling', 'running', 'heartbeat', 'metric', 'failure', 'terminal',
+                  'preview_model', 'preview_applied', 'preview_error', 'checkpoint', 'command_result']
+    sim_time: float = Field(ge=0)
+    wall_time: float = Field(ge=0)
+    payload: dict = Field(default_factory=dict)
+
+    @field_validator('payload')
+    @classmethod
+    def finite_json_payload(cls, value):
+        check_json(value, 'payload')
+        return value
+
+
+class WorkerControl(DataModel):
+    run_id: str
+    kind: Literal['cancel', 'preview', 'command']
+    command: InteractiveCommand | None = None
+    selection_seq: int | None = Field(default=None, gt=0)
+    display: 'DisplaySettings | None' = None
+
+    @model_validator(mode='after')
+    def preview_fields(self):
+        if (self.kind == 'command') != (self.command is not None):
+            raise ValueError('Only command controls require command')
+        if self.kind == 'preview' and (self.selection_seq is None or self.display is None):
+            raise ValueError('preview requires selection_seq and display')
+        return self
+
+
+class RunRequest(DataModel):
+    experiment_id: str
+    mode: Literal['TRAIN', 'EVALUATE', 'INTERACTIVE']
+    max_decision_steps: int = Field(gt=0, description='本次运行的决策步数上限；一次同时推进全部world，不乘world数，不计内部物理子步')
+    checkpoint_artifact_id: str | None = None
+    checkpoint_interval_updates: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode='after')
+    def saving_requires_training(self):
+        if self.mode != 'TRAIN' and self.checkpoint_interval_updates is not None:
+            raise ValueError('checkpoint_interval_updates requires TRAIN')
+        return self
+
+
+class CheckpointReference(DataModel):
+    artifact_id: str
+    path: str
+    size: int = Field(gt=0)
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class CheckpointArtifact(DataModel):
+    id: str
+    run: str
+    kind: Literal['checkpoint'] = 'checkpoint'
+    path: str
+    size: int = Field(gt=0)
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class DisplaySettings(DataModel):
+    enabled: bool
+    world_id: int = Field(ge=0)
+    rate_hz: float = Field(ge=1, le=30)
+
+
+class DisplayPatch(DataModel):
+    enabled: bool | None = None
+    world_id: int | None = Field(default=None, ge=0)
+    rate_hz: float | None = Field(default=None, ge=1, le=30)
+
+    @model_validator(mode='after')
+    def no_explicit_null(self):
+        if any(getattr(self, key) is None for key in self.model_fields_set):
+            raise ValueError('Display fields cannot be null')
+        return self
+
+
+class PreviewModel(DataModel):
+    path: str
+    sha256: str = Field(pattern='^[0-9a-f]{64}$')
+    nbody: int = Field(gt=0)
+
+
+class PreviewApplied(DataModel):
+    selection_seq: int = Field(gt=0)
+    display: DisplaySettings
+
+
+class PreviewFrame(DataModel):
+    run_id: str
+    world_id: int = Field(ge=0)
+    selection_seq: int = Field(gt=0)
+    episode: int = Field(ge=0)
+    decision: int = Field(ge=0)
+    tick: int = Field(ge=0)
+    sim_time: float = Field(ge=0)
+    scene_hash: str = Field(pattern='^[0-9a-f]{64}$')
+    nbody: int = Field(gt=0)
+
+
+WorkerControl.model_rebuild()
+
+# 两段 preview 共享固定消息格式，数组为 little-endian float32 xpos 后接 xmat。
+PREVIEW_CAPACITY = 128 * 1024
+PREVIEW_HEADER_CAPACITY = 4096
+
+
+def preview_socketpair():
+    pair = socket.socketpair(type=socket.SOCK_SEQPACKET)
+    for sock in pair:
+        sock.setblocking(False)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, PREVIEW_CAPACITY * 2)
+    return pair
+
+
+def check_preview_capacity(sock, nbody):
+    size = 4 + PREVIEW_HEADER_CAPACITY + nbody * 12 * 4
+    if size > min(PREVIEW_CAPACITY, sock.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF) - 32):
+        raise ValueError('Scene exceeds preview packet capacity')
+
+
+def encode_preview(header, arrays):
+    metadata = header.model_dump_json().encode()
+    if len(metadata) > PREVIEW_HEADER_CAPACITY or len(arrays) != header.nbody * 12 * 4:
+        raise ValueError('Invalid preview packet size')
+    packet = struct.pack('<I', len(metadata)) + metadata + arrays
+    if len(packet) > PREVIEW_CAPACITY:
+        raise ValueError('Scene exceeds preview packet capacity')
+    return packet
+
+
+def decode_preview(packet):
+    if len(packet) < 4:
+        raise ValueError('truncated preview header')
+    size, = struct.unpack('<I', packet[:4])
+    if size > PREVIEW_HEADER_CAPACITY or len(packet) < size + 4:
+        raise ValueError('truncated preview header')
+    header = PreviewFrame.model_validate_json(packet[4:4 + size])
+    arrays = packet[4 + size:]
+    if len(arrays) != header.nbody * 12 * 4:
+        raise ValueError('truncated preview arrays')
+    return header, arrays
+
+
+def send_preview(sock, pending):
+    if pending is not None:
+        try:
+            sock.send(pending)
+        except BlockingIOError:
+            return pending
+    return None
+
+
+def drain_preview(sock, *, run_id, selection_seq, world_id, scene_hash, capacity=PREVIEW_CAPACITY):
+    latest = None
+    while True:
+        try:
+            packet, _, flags, _ = sock.recvmsg(capacity)
+        except BlockingIOError:
+            return latest
+        if not packet:
+            return latest
+        if flags & socket.MSG_TRUNC:
+            raise ValueError('truncated preview packet')
+        header, arrays = decode_preview(packet)
+        if (header.run_id, header.selection_seq, header.world_id, header.scene_hash) != (
+                run_id, selection_seq, world_id, scene_hash):
+            continue
+        if latest is None or (header.episode, header.decision) > (latest[0].episode, latest[0].decision):
+            latest = header, arrays
