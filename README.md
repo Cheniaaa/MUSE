@@ -51,7 +51,7 @@ PYTHONDONTWRITEBYTECODE=1 python examples/basic_flight/submit.py --experiment-id
 
 算法扩展的 `learning_state_dict()` 可返回借用参数/Adam tensor的普通state dict。Runtime在发布时生成一次独立CPU快照；直接调用该hook并需要跨后续更新保留基准时，应显式调用 `muse_runtime.checkpoint.snapshot_learning_state(...)`。
 
-## Checkpoint
+## Checkpoint 验证
 
 CPU 边界测试位于 `tests/unit/test_checkpoint_contract.py`、`tests/unit/test_checkpoint_io.py` 与 `tests/integration/test_checkpoint.py`。真实 GPU 验收应串行执行：
 
