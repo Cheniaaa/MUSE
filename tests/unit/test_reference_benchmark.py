@@ -402,6 +402,34 @@ def test_http_poll_failure_cancels_owned_active_run_and_preserves_root(benchmark
     assert 'upstream failure' in (output / 'failure.txt').read_text()
 
 
+@pytest.mark.parametrize('pending_cancel', [False, True])
+def test_user_interrupt_cancels_active_run_and_preserves_interruption(benchmark, monkeypatch, tmp_path, pending_cancel):
+    boundary = HttpBoundary(cancel_stuck=pending_cancel)
+    install_boundary(monkeypatch, benchmark, boundary)
+    interrupted = False
+    def interrupt_poll(request, timeout):
+        nonlocal interrupted
+        if request.get_method() == 'GET' and request.full_url == 'http://muse/runs/run-0':
+            if not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt('user interrupt')
+            boundary.runs['run-0']['state'] = 'CANCELLED'
+            return Response(json.dumps(boundary.status('run-0')).encode())
+        return boundary.urlopen(request, timeout)
+    monkeypatch.setattr(benchmark, 'urlopen', interrupt_poll)
+    output = tmp_path / 'interrupted'
+    with pytest.raises(KeyboardInterrupt, match='user interrupt'):
+        benchmark.run_benchmark('http://muse', output)
+    ledger = json.loads((output / 'ledger.json').read_text())
+    assert ledger['status'] == 'FAILED' and ledger['runs'][0]['state'] == 'CANCELLED'
+    assert not ledger['runs'][0]['complete']
+    assert boundary.cancelled == ['run-0'] and len(boundary.runs) == 1
+    assert all(row['state'] == 'NOT_STARTED' for row in ledger['runs'][1:])
+    directory = output / ledger['runs'][0]['key']
+    assert (directory / 'artifacts/events.jsonl').is_file()
+    assert 'KeyboardInterrupt: user interrupt' in (output / 'failure.txt').read_text()
+
+
 @pytest.mark.parametrize('fault', ['fail', 'corrupt'])
 def test_failure_saves_root_cause_and_does_not_start_followups(benchmark, monkeypatch, tmp_path, fault):
     boundary = HttpBoundary(**{fault: True})

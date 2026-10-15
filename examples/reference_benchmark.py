@@ -323,7 +323,7 @@ def run_benchmark(server: str, output: Path) -> dict:
             ledger['status'] = 'COMPLETED'
     except _BudgetExpired as exc:
         ledger.update(status='BUDGET_EXHAUSTED', reason=str(exc))
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         # 此处只保存根因并重新抛出，不将 HTTP/科学证据错误转换成成功或重试。
         try:
             if active is not None:
