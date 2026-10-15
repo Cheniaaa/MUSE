@@ -1,0 +1,39 @@
+algorithm: builtin:ippo
+algorithm_config:
+  collection_steps: 32
+  hidden_dims: [64, 64]
+  learning_rate: 0.0003
+  num_learning_epochs: 4
+  num_mini_batches: 4
+  gamma: 0.99
+  lam: 0.95
+  clip_param: 0.2
+  value_loss_coef: 1
+  entropy_coef: 0.01
+  max_grad_norm: 1
+task: history_task
+task_config:
+  horizon_decisions: 500
+  workspace_by_role:
+    pilot: {minimum_m: [-2, -2, 0.5], maximum_m: [2.5, 3, 1.5]}
+  service_bits_scale: 2500000
+  rf_energy_scale_j: 0.00004
+  rf_penalty_weight: 1
+model_bindings:
+  radio: builtin:free_space_radio
+agent_roles:
+  pilot:
+    entity_kind: aerial_vehicle
+    action_interfaces: {motion: body_velocity, radio: power_channel}
+    observation_terms:
+      - {selection_id: target, term: 'builtin:relative_target', required: true}
+      - {selection_id: velocity, term: 'builtin:velocity_world', required: true}
+      - {selection_id: orientation, term: 'builtin:orientation_wxyz', required: true}
+      - {selection_id: angular_velocity, term: 'builtin:angular_velocity_body', required: true}
+      - {selection_id: previous_action, term: 'builtin:previous_action', required: true}
+      - {selection_id: remaining, term: remaining_time, required: true}
+      - {selection_id: feedback, term: 'builtin:selected_link_feedback', history_length: 4, required: true, config: {link_id: up, rate_scale_bps: 100000000, power_scale_w: 0.001}}
+    reward_terms:
+      - {selection_id: team, term: team_reward, required: true, weight: 1}
+world_termination_terms:
+  - {selection_id: mission, term: mission_done, required: true}

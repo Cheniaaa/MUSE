@@ -1,0 +1,6 @@
+<mujoco model="hybrid_history_markov">
+  <worldbody>
+    <light pos="4 0 12"/>
+    <geom name="floor" type="plane" size="15 15 .1" rgba=".3 .35 .4 1"/>
+  </worldbody>
+</mujoco>

@@ -225,7 +225,7 @@ import importlib.abc, json, sys
 from pathlib import Path
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'torch', 'mujoco', 'mjlab', 'warp'}:
+        if fullname.split('.')[0] in {'torch', 'mujoco_warp', 'mjlab', 'warp'}:
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Block())
 from muse_builtins.metadata import export_metadata

@@ -269,6 +269,37 @@ def test_hidden_dimensions_are_positive_at_config_boundary(dims):
         resolve_config(export_config_schema(IPPOConfig), {'hidden_dims': dims}, {}, require_complete=True)
 
 
+@pytest.mark.parametrize('budget,updates', [(1, 0), (5, 1)])
+def test_driver_partial_budget_only_updates_full_blocks_and_restores_fresh_rollout(budget, updates):
+    from muse_runtime.driver import run
+    from test_mappo import assert_tree_equal
+    learner, obs, masks = make_algorithm()
+    before = snapshot_learning_state(learner.learning_state_dict())
+    count = 0
+    def step(actions):
+        nonlocal count
+        result = StepOutput(obs, masks, transition(obs, masks, count), {})
+        count += 1
+        return result
+    env = NS(policy_input=PolicyInput(obs, masks), rng=None, step=step)
+    checkpoints = []
+    result = run(env, learner, lambda: None, lambda *args: None, mode='TRAIN', collection_steps=4,
+                 max_decision_steps=budget,
+                 checkpoint_sink=lambda **counts: checkpoints.append((counts,
+                     snapshot_learning_state(learner.learning_state_dict()))))
+    assert result == dict(state='COMPLETED', steps=budget, updates=updates)
+    assert len(checkpoints) == 1
+    counts, state = checkpoints[0]
+    assert counts == dict(steps=budget, updates=updates) and state['updates'] == updates
+    if updates == 0:
+        for role, child in learner.children.items():
+            assert_tree_equal(child.actor.state_dict(), before['roles'][role]['actor'])
+            assert not child.optimizer.state
+    restored, _, _ = make_algorithm()
+    restored.load_learning_state_dict(state)
+    assert all(child.storage.step == 0 and child.storage.pending is None for child in restored.children.values())
+
+
 def test_advantage_normalization_excludes_masked_outlier():
     from muse_builtins.algorithms.ippo import compute_returns
     st = NS(rewards=torch.tensor([[[1.], [3.], [10000.]]]), values=torch.zeros(1, 3, 1),

@@ -175,8 +175,6 @@ class Catalog:
                 raise ConfigError('checkpoint_artifact_id', f'Learning {mode} requires a checkpoint')
             if experiment.training_schedule is None and checkpoint_artifact_id is not None:
                 raise ConfigError('checkpoint_artifact_id', f'Rule {mode} cannot load a checkpoint')
-        if mode == 'TRAIN' and max_decision_steps % experiment.training_schedule.collection_steps:
-            raise ConfigError('max_decision_steps', 'TRAIN budget must be an integer multiple of collection_steps')
         checkpoint = self.resolve_checkpoint(checkpoint_artifact_id, experiment) if checkpoint_artifact_id is not None else None
         if experiment.platform_revision != self.builtins.platform_revision:
             raise ConfigError('platform_revision', 'Experiment platform revision is unavailable')

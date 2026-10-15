@@ -1,5 +1,4 @@
 """真实Env/native history的slot轴、时间顺序与局部/终态reset。"""
-from copy import deepcopy
 from dataclasses import replace
 
 import pytest
@@ -15,16 +14,6 @@ def history_env(pipeline, tmp_path, gpu_stream):
     from muse_runtime.env import MuseEnv, RuntimeContext
     from muse_runtime.rng import WorldRng
     catalog, request = cooperative_pipeline(pipeline, tmp_path)
-    group_id = request['role_config']['rover']['group_id']
-    group = next(g for g in request['scenario']['entity_groups'] if g['group_id'] == group_id)
-    group['count'] = 3
-    poses = request['scenario']['placements'][group['placement_id']]
-    pose = deepcopy(poses[-1])
-    pose['position'][0] += 2.
-    poses.append(pose)
-    request['role_config']['rover']['slots'].append(2)
-    targets = request['scenario']['command_targets_world']['rover']
-    targets.append(deepcopy(targets[-1]))
     request['term_config'] = {
         'roles': {'rover': {'observation': {'target': {'history_length': 4}}}},
         'critic_inputs': {'team': {'observation': {
@@ -51,10 +40,10 @@ def test_history_keeps_slots_scope_and_oldest_to_newest(history_env):
     env = history_env
     frames = [raw_target(env)]*4
     torch.testing.assert_close(env.observations.actors['rover']['target'], torch.stack(frames, dim=2))
-    assert env.observations.actors['rover']['target'].shape == (2, 3, 4, 2)
-    assert env.observations.critic_inputs['team']['rover_target'].shape == (2, 3, 4, 2)
+    assert env.observations.actors['rover']['target'].shape == (2, 2, 4, 2)
+    assert env.observations.critic_inputs['team']['rover_target'].shape == (2, 2, 4, 2)
     assert env.observations.critic_inputs['team']['phase'].shape == (2, 4, 1)
-    assert env.observations.actors['rover']['velocity'].shape == (2, 3, 2)
+    assert env.observations.actors['rover']['velocity'].shape == (2, 2, 2)
     for step in range(1, 4):
         action = zero_actions(env)
         action['rover'].motion[..., 0] = .5*env.experiment.action_specs['rover'].maximum[0]

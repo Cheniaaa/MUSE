@@ -6,6 +6,8 @@ UAV＋UGV同world、不同动作/观测维度的使用方式见 [异构IPPO示�
 
 局部actor＋集中critic的合作训练见 [MAPPO示例](examples/cooperative_mappo/README.md)：支持同role参数共享开关、GRU/LSTM、显式world team reward和Task学习边界。[M2.2验收报告](docs/validation/m2-mappo.md)记录真实GPU与HTTP恢复证据。
 
+完整motion／RF功率／频道混合学习见[ISAC＋cost](examples/isac_cost/README.md)；有限历史与隐藏干扰对照见[history＋Markov](examples/hybrid_history_markov/README.md)。两例沿同一HTTP/Worker/checkpoint路径，固定预算试验由`examples/reference_benchmark.py`执行。
+
 M2跨阶段审查的四项问题已完成有限修复，当前配置及学习state快照契约见 [收口验收报告](docs/validation/m2-complexity-cleanup.md)。
 
 ## 启动与训练
@@ -23,7 +25,7 @@ PYTHONDONTWRITEBYTECODE=1 python -m muse_server.app --port 8001 --data-dir /tmp/
 PYTHONDONTWRITEBYTECODE=1 python examples/basic_flight/submit.py --mode TRAIN --max-decision-steps 2400 --checkpoint-interval-updates 25 --no-display
 ```
 
-输出包含 `experiment_id`、`run_id` 与 `run_url`。`--no-display` 提交后立即返回；默认尝试打开该 Run 的显示服务。`max-decision-steps` 是本次 Run 的决策步数，每步同时推进所有 world。TRAIN 预算须为 Experiment 中 collection_steps（示例默认 24）的整数倍。
+输出包含 `experiment_id`、`run_id` 与 `run_url`。`--no-display` 提交后立即返回；默认尝试打开该 Run 的显示服务。`max-decision-steps` 是本次 Run 的正整数决策步数上限，每步同时推进所有 world。TRAIN 每收满 Experiment 中的 `collection_steps=H`（示例默认 24）才更新一次。预算不足 H 时正常结束但更新次数为 0；非整块尾段不更新，也不保存进 checkpoint，恢复时从新 episode 开始。
 
 ## 查询 checkpoint 并恢复
 
