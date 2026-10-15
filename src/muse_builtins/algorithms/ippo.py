@@ -14,7 +14,7 @@ from pydantic import Field
 
 from muse_sdk.config import DataModel
 from muse_sdk.interfaces import Algorithm
-from muse_sdk.runtime_types import ActResult, MotionAction
+from muse_sdk.runtime_types import ActResult, MotionAction, MotionRadioAction, RadioAction
 
 
 class IPPOConfig(DataModel):
@@ -76,6 +76,7 @@ class IPPO(Algorithm):
         self.fields = {}
         self.bounds = {}
         self.shapes = {}
+        self.action_specs = {}
         self.update_count = 0
         self.mode = 'TRAIN'
         self._sequence = 0
@@ -83,7 +84,7 @@ class IPPO(Algorithm):
     @classmethod
     def describe(cls):
         return dict(algorithm_id='ippo', config_schema=IPPOConfig,
-                    observation_requirements=[], action_requirements=['body_velocity', 'diff_drive'],
+                    observation_requirements=[], action_requirements=['body_velocity', 'diff_drive', 'power_channel'],
                      actor_observation='all_local', critic_inputs={}, reward_inputs=['role'], cost_inputs=['role'],
                      act_aux={}, diagnostics={}, training_schedule={'collection_steps': 'collection_steps'})
 
@@ -120,6 +121,7 @@ class IPPO(Algorithm):
         self._cpu_rng = torch.Generator(device='cpu').manual_seed(seed).get_state()
         self._cuda_rng = (torch.Generator(device=self.device).manual_seed(seed).get_state()
                           if self.device.type == 'cuda' else None)
+        self.action_specs = experiment.action_specs
         with self._learner_rng():
             for role, spec in experiment.action_specs.items():
                 b, n, width = spec.shape
@@ -133,9 +135,9 @@ class IPPO(Algorithm):
                 obs = TensorDict({key: torch.zeros(b*n, math.prod(shape), device=self.device)
                                   for key, shape in self.fields[role].items()}, [b*n], device=self.device)
                 groups = {'actor': list(obs.keys()), 'critic': list(obs.keys())}
+                width, distribution = self._action_model_options(role)
                 actor = MLPModel(obs, groups, 'actor', width, hidden_dims=self.config['hidden_dims'],
-                                 distribution_cfg={'class_name': 'rsl_rl.modules.distribution:BetaDistribution',
-                                                   'action_range': (0., 1.)})
+                                 distribution_cfg=distribution)
                 critic = MLPModel(obs, groups, 'critic', 1, hidden_dims=self.config['hidden_dims'])
                 storage = MaskedStorage('rl', b*n, self.collection_steps, obs, [width], str(self.device))
                 ppo = {key: value for key, value in self.config.items() if key not in ('collection_steps', 'hidden_dims')}
@@ -164,6 +166,34 @@ class IPPO(Algorithm):
         lo, hi = self.bounds[role]
         return lo + (hi - lo) * raw
 
+    def _action_model_options(self, role):
+        spec = self.action_specs[role]
+        width = spec.shape[-1]
+        if spec.radio is None:
+            return width, {'class_name': 'rsl_rl.modules.distribution:BetaDistribution',
+                           'action_range': (0., 1.)}
+        return width + 2, {'class_name': 'muse_builtins.algorithms.distributions:HybridDistribution',
+                           'motion_dim': width, 'channel_ids': spec.radio.channel_ids}
+
+    def _deterministic_raw(self, role, actor):
+        import torch
+        if self.action_specs[role].radio is None:
+            return actor.output_mean.detach()
+        alpha, beta, logits = actor.output_distribution_params
+        channel = actor.distribution.channel_ids[logits.argmax(dim=-1)].to(alpha.dtype)
+        return torch.cat((alpha / (alpha + beta), channel.unsqueeze(-1)), dim=-1).detach()
+
+    def _role_action(self, role, raw):
+        import torch
+        spec = self.action_specs[role]
+        raw = raw.reshape(*self.shapes[role], -1)
+        motion = self.to_motion(role, raw[..., :spec.shape[-1]])
+        if spec.radio is None:
+            return MotionAction(motion)
+        radio = spec.radio
+        power = radio.power_minimum_w + (radio.power_maximum_w - radio.power_minimum_w) * raw[..., -2]
+        return MotionRadioAction(motion, RadioAction(power, raw[..., -1].to(torch.int32)))
+
     def set_mode(self, mode):
         if mode not in ('TRAIN', 'EVALUATE'):
             raise ValueError('Unsupported IPPO mode')
@@ -190,7 +220,7 @@ class IPPO(Algorithm):
                 if self.mode == 'TRAIN':
                     raw = child.act(obs)
                     if deterministic:
-                        raw = child.actor(obs)
+                        raw = self._deterministic_raw(role, child.actor)
                         child.transition.actions = raw.detach()
                         child.transition.actions_log_prob = child.actor.get_output_log_prob(raw).detach()
                     child.storage.pending = child.transition
@@ -198,7 +228,7 @@ class IPPO(Algorithm):
                     child.transition = type(child.transition)()
                 else:
                     raw = child.actor(obs, stochastic_output=False)
-                actions[role] = MotionAction(self.to_motion(role, raw).reshape(*self.shapes[role], -1))
+                actions[role] = self._role_action(role, raw)
             if self.mode == 'TRAIN':
                 for cost in self.cost_state.values():
                     cost.act(observations, role_masks)
@@ -264,9 +294,17 @@ class IPPO(Algorithm):
         return [f'{kind}.{name}' for kind in ('actor', 'critic')
                 for name, _ in getattr(child, kind).named_parameters()]
 
+    def _state_signature(self):
+        # 有序角色/输入和完整动作语义决定参数解释，运行batch轴不属于学习布局。
+        return deepcopy({'algorithm': 'ippo', 'config': self.config,
+                         'actions': [(role, dict(spec.model_dump(), shape=spec.shape[1:]))
+                                     for role, spec in self.action_specs.items()],
+                         'actors': [(role, list(fields.items())) for role, fields in self.fields.items()]})
+
     def learning_state_dict(self):
         """返回普通state_dict，可借用live tensor；稳定CPU快照归Runtime。"""
-        state = {'revision': 1, 'updates': self.update_count, 'cpu_rng': self._cpu_rng,
+        state = {'revision': 2, 'signature': self._state_signature(),
+                 'updates': self.update_count, 'cpu_rng': self._cpu_rng,
                           'cuda_rng': self._cuda_rng, 'roles': {
                               role: {'actor': child.actor.state_dict(), 'critic': child.critic.state_dict(),
                                      'optimizer': child.optimizer.state_dict(),
@@ -279,13 +317,15 @@ class IPPO(Algorithm):
 
     def load_learning_state_dict(self, state):
         import torch
+        if state['revision'] != 2 or set(state['roles']) != set(self.children):
+            raise ValueError('Incompatible learning state revision/role layout')
+        if state.get('signature') != self._state_signature():
+            raise ValueError('Incompatible learning layout/configuration signature')
         costs = {json.dumps(key): cost for key, cost in self.cost_state.items()}
         if ('costs' in state) != bool(costs) or set(state.get('costs', {})) != set(costs):
             raise ValueError('Cost checkpoint layout mismatch')
         for key, cost in costs.items():
             cost.validate_state_dict(state['costs'][key])
-        if state['revision'] != 1 or set(state['roles']) != set(self.children):
-            raise ValueError('Incompatible learning state revision/role names')
         for key, current in [('cpu_rng', self._cpu_rng), ('cuda_rng', self._cuda_rng)]:
             saved_rng = state[key]
             if current is None:

@@ -11,13 +11,15 @@ from muse_runtime.checkpoint import snapshot_learning_state
 
 
 def make_algorithm(batch=2, costs=None, **overrides):
-    from muse_sdk.experiment import CostLayout
+    from muse_sdk.experiment import ActionSpec, CostLayout
     assert importlib.util.find_spec('muse_builtins.algorithms.mappo') is not None, 'MAPPO implementation missing'
     from muse_builtins.algorithms.mappo import MAPPO, MAPPOConfig
     config = MAPPOConfig(collection_steps=4, hidden_dims=[12], num_learning_epochs=2,
                          num_mini_batches=3).model_dump()
     config.update(overrides)
-    specs = {r: NS(shape=[batch, n, width], minimum=[-2.] * width, maximum=[3.] * width)
+    specs = {r: ActionSpec(interface='body_velocity' if width == 4 else 'diff_drive', dtype='float32',
+                          shape=[batch, n, width], fields=['motion']*width, units=['unit']*width,
+                          frames=['body_flu']*width, minimum=[-2.] * width, maximum=[3.] * width)
              for r, n, width in [('scout', 2, 4), ('guard', 1, 2)]}
     actors = {r: [NS(path=['observations', 'actors', r, 'target'],
                      tensor=NS(shape=[batch, s.shape[1], width]))]

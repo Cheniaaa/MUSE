@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from muse_sdk.runtime_types import ActResult, MotionAction
+from muse_sdk.runtime_types import ActResult
 from muse_sdk.config import DataModel
 from .ippo import IPPO, IPPOConfig
 
@@ -50,6 +50,7 @@ class MAPPO(IPPO):
         self._cpu_rng = torch.Generator(device='cpu').manual_seed(seed).get_state()
         self._cuda_rng = (torch.Generator(device=self.device).manual_seed(seed).get_state()
                           if self.device.type == 'cuda' else None)
+        self.action_specs = experiment.action_specs
         self.critic_fields = {(item.path[2], item.path[3]): tuple(item.tensor.shape[1:])
                               for items in experiment.algorithm_inputs.critics.values() for item in items}
         if not self.critic_fields:
@@ -81,9 +82,9 @@ class MAPPO(IPPO):
                                       'critic': torch.zeros(count, sum(map(math.prod, self.critic_fields.values())),
                                                            device=self.device)}, [count], device=self.device)
                     groups = {'actor': ['actor'], 'critic': ['critic']}
+                    width, distribution = self._action_model_options(role)
                     actor = model_type(obs, groups, 'actor', width, **model_options,
-                                     distribution_cfg={'class_name': 'rsl_rl.modules.distribution:BetaDistribution',
-                                                       'action_range': (0., 1.)})
+                                      distribution_cfg=distribution)
                     critic = model_type(obs, groups, 'critic', 1, **model_options)
                     storage = MaskedStorage('rl', count, self.collection_steps, obs, [width], str(self.device))
                     ppo = {key: self.config[key] for key in IPPOConfig.model_fields
@@ -145,8 +146,7 @@ class MAPPO(IPPO):
                 if self.mode == 'TRAIN':
                     raw = child.act(obs)
                     if deterministic:
-                        # Beta mean 来自本次 forward 的 distribution，不再次推进 RNN。
-                        raw = child.actor.output_mean.detach()
+                        raw = self._deterministic_raw(role, child.actor)
                         child.transition.actions = raw
                         child.transition.actions_log_prob = child.actor.get_output_log_prob(raw).detach()
                     child.storage.pending = child.transition
@@ -157,15 +157,15 @@ class MAPPO(IPPO):
                 b, n = self.shapes[role]
                 if role not in actions:
                     actions[role] = torch.empty(b, n, raw.shape[-1], device=self.device)
-                physical = self.to_motion(role, raw).reshape(b, -1, raw.shape[-1])
+                role_raw = raw.reshape(b, -1, raw.shape[-1])
                 if slot is None:
-                    actions[role].copy_(physical)
+                    actions[role].copy_(role_raw)
                 else:
-                    actions[role][:, slot:slot + 1].copy_(physical)
+                    actions[role][:, slot:slot + 1].copy_(role_raw)
             if self.mode == 'TRAIN':
                 for cost in self.cost_state.values():
                     cost.act(observations, role_masks)
-        return ActResult({role: MotionAction(value) for role, value in actions.items()}, token)
+        return ActResult({role: self._role_action(role, value) for role, value in actions.items()}, token)
 
     def process_env_step(self, transition, act_aux):
         import torch
@@ -210,19 +210,9 @@ class MAPPO(IPPO):
                 st.pending_aux = None
 
     def _state_signature(self):
-        # B 属于 episode，不是参数布局；输入顺序与 bounds 是学习解释的一部分。
-        return deepcopy({'algorithm': 'mappo', 'revision': 1, 'config': self.config,
-                          'owners': self.owners, 'actors': {role: list(fields.items())
-                                                           for role, fields in self.fields.items()},
-                          'critics': list(self.critic_fields.items()),
-                          'slots': {role: shape[1] for role, shape in self.shapes.items()},
-                          'bounds': {role: [lo.tolist(), hi.tolist()] for role, (lo, hi) in self.bounds.items()}})
-
-    def learning_state_dict(self):
-        return dict(super().learning_state_dict(), signature=self._state_signature())
+        return dict(super()._state_signature(), algorithm='mappo', owners=deepcopy(self.owners),
+                    critics=list(self.critic_fields.items()))
 
     def load_learning_state_dict(self, state):
-        if state.get('signature') != self._state_signature():
-            raise ValueError('Incompatible MAPPO layout/configuration signature')
         super().load_learning_state_dict(state)
         self._clear_hidden_states()

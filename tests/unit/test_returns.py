@@ -9,12 +9,14 @@ from muse_runtime.checkpoint import snapshot_learning_state
 
 
 def make_algorithm(device='cpu', costs=None, **overrides):
-    from muse_sdk.experiment import CostLayout
+    from muse_sdk.experiment import ActionSpec, CostLayout
     from muse_builtins.algorithms.ippo import IPPO, IPPOConfig
     config = IPPOConfig(collection_steps=4, hidden_dims=[16], num_learning_epochs=2,
                         num_mini_batches=1).model_dump()
     config.update(overrides)
-    specs = {r: NS(shape=[2, n, 4], minimum=[-.1]*4, maximum=[.1]*4)
+    specs = {r: ActionSpec(interface='body_velocity', dtype='float32', shape=[2, n, 4],
+                          fields=['vx', 'vy', 'vz', 'yaw_rate'], units=['m/s']*3 + ['rad/s'],
+                          frames=['body_flu']*4, minimum=[-.1]*4, maximum=[.1]*4)
              for r, n in [('scout', 1), ('guard', 2)]}
     inputs = {r: [NS(path=['observations', 'actors', r, 'target'], tensor=NS(shape=[2, s.shape[1], 3]))]
               for r, s in specs.items()}
@@ -297,7 +299,7 @@ def test_state_boundary_rejects_malformed_rng_and_adam_step(corrupt):
     elif corrupt == 'adam_step_shape':
         next(iter(state['roles']['scout']['optimizer']['state'].values()))['step'] = torch.ones(2)
     else:
-        state['revision'] = 2
+        state['revision'] += 1
     fresh, _, _ = make_algorithm()
     with pytest.raises(ValueError, match='shape|revision|RNG'):
         fresh.load_learning_state_dict(state)
