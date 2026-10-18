@@ -112,6 +112,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--snapshot-fd', type=int, required=True)
     parser.add_argument('--model', type=Path, required=True)
+    parser.add_argument('--objects', type=Path, required=True)
     parser.add_argument('--sha256', required=True)
     parser.add_argument('--nbody', type=int, required=True)
     parser.add_argument('--run-id', required=True)
@@ -131,14 +132,18 @@ def main():
                 data = data[os.write(protocol_fd, data):]
 
     server = None
+    interaction = None
     sock = socket.socket(fileno=args.snapshot_fd)
     sock.setblocking(False)
     try:
         import numpy as np
         import viser
+        from muse_sdk.view_protocol import SceneObject, ViewIntent
+        from .scene_interaction import SceneInteraction
         model = load_model(args.model, args.sha256, args.nbody)
+        objects = [SceneObject.model_validate(obj) for obj in json.loads(args.objects.read_text(encoding='utf-8'))]
         server = viser.ViserServer(host='127.0.0.1', port=args.port, verbose=False)
-        scene = create_scene(server, model)
+        interaction = SceneInteraction(server, model, objects, view_id=None, emit=emit)
         world = server.gui.add_dropdown('World', options=tuple(str(i) for i in range(args.world_count)), initial_value='0')
         rate = server.gui.add_slider('Rate (Hz)', min=1., max=30., step=1., initial_value=10.)
         status = server.gui.add_text('Display', initial_value='pending', disabled=True)
@@ -159,6 +164,7 @@ def main():
         os.set_blocking(0, False)
         incoming = b''
         state = None
+        view_ids = set()
         cursor = None
         while True:
             while True:
@@ -172,12 +178,22 @@ def main():
                 while b'\n' in incoming:
                     line, incoming = incoming.split(b'\n', 1)
                     message = json.loads(line)
+                    if message['kind'] == 'view_intent':
+                        target = message['view_id']
+                        try:
+                            interaction.apply_intent(ViewIntent.model_validate(message['intent']), view_id=target)
+                        except ValueError as exc:
+                            emit({'kind': 'view', 'view_id': target if target in view_ids else None,
+                                  'event': {'kind': 'error', 'message': str(exc)}})
+                        continue
                     update_interaction(message)
                     if message['kind'] == 'command_error':
                         continue
                     if message['kind'] == 'request_error':
                         status.value = message['message']
                         continue
+                    view_ids = set(message['view_ids'])
+                    interaction.set_view_ids(message['view_ids'])
                     updated = message['state']
                     if state is None or updated['effective_seq'] != state['effective_seq']:
                         cursor = None
@@ -199,7 +215,7 @@ def main():
                             raise ValueError('Nonfinite preview pose')
                         xpos = values[:model.nbody * 3].reshape(1, model.nbody, 3)
                         xmat = values[model.nbody * 3:].reshape(1, model.nbody, 3, 3)
-                        scene.update_from_arrays(xpos, xmat)
+                        interaction.update_frame(xpos[0], xmat[0], header.model_dump(mode='json'))
                         cursor = key
                         clock.value = f'World {header.world_id} / Episode {header.episode} / Tick {header.tick}'
                         emit({'kind': 'frame', 'header': header.model_dump()})
@@ -209,6 +225,8 @@ def main():
         return 1
     finally:
         sock.close()
+        if interaction is not None:
+            interaction.close()
         if server is not None:
             server.stop()
         os.close(protocol_fd)

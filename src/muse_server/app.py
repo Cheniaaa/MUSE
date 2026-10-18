@@ -317,6 +317,18 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
             return dict(records=[], next_offset=offset, eof=True, terminal=terminal, availability='not_started')
         return read_metric_page(Path(record['artifact_directory']), offset=offset, limit=limit, terminal=terminal)
 
+    @app.post('/runs/{run_id}/display/clients')
+    def register_display_client(run_id: str):
+        return app.state.supervisor.register_view_client(run_id)
+
+    @app.delete('/runs/{run_id}/display/clients/{view_id}', status_code=204)
+    def remove_display_client(run_id: str, view_id: str):
+        app.state.supervisor.remove_view_client(run_id, view_id)
+
+    @app.get('/runs/{run_id}/entities')
+    def entities(run_id: str):
+        return app.state.supervisor.entities(run_id)
+
     @app.get('/runs/{run_id}/logs')
     def logs(run_id: str, channel: LogChannel = 'worker', offset: PageOffset = 0,
              limit: Annotated[int, Query(ge=1, le=262144)] = 65536):
@@ -409,6 +421,58 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
                 # 主动接收disconnect，同时不阻塞Supervisor读取Worker。
                 try:
                     message = await asyncio.wait_for(websocket.receive(), timeout=.05)
+                    if message['type'] == 'websocket.disconnect':
+                        return
+                except asyncio.TimeoutError:
+                    pass
+        except WebSocketDisconnect:
+            return
+
+    @app.websocket('/streams/runs/{run_id}/view')
+    async def view_stream(websocket: WebSocket, run_id: str, view_id: str):
+        supervisor = app.state.supervisor
+        try:
+            initial = supervisor.view_events(run_id, view_id)
+        except (KeyError, ValueError):
+            await websocket.close(code=1008)
+            return
+        try:
+            await websocket.accept()
+            for event in initial:
+                await websocket.send_json(event)
+            while True:
+                for event in supervisor.view_events(run_id, view_id):
+                    await websocket.send_json(event)
+                try:
+                    intent = await asyncio.wait_for(websocket.receive_json(), timeout=.05)
+                    try:
+                        supervisor.view_intent(run_id, view_id, intent)
+                    except ValueError as exc:
+                        await websocket.send_json({'kind': 'error', 'view_id': view_id, 'message': str(exc)})
+                except asyncio.TimeoutError:
+                    pass
+        except WebSocketDisconnect:
+            return
+        finally:
+            supervisor.remove_view_client(run_id, view_id)
+
+    @app.websocket('/streams/runs/{run_id}/entities')
+    async def entity_stream(websocket: WebSocket, run_id: str):
+        try:
+            app.state.supervisor.get_run(run_id)
+        except KeyError:
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        previous = None
+        try:
+            while True:
+                current = app.state.supervisor.entities(run_id)
+                if current != previous:
+                    await websocket.send_json(current)
+                    previous = current
+                try:
+                    message = await asyncio.wait_for(websocket.receive(), timeout=.1)
                     if message['type'] == 'websocket.disconnect':
                         return
                 except asyncio.TimeoutError:

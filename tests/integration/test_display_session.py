@@ -84,12 +84,15 @@ from muse_sdk.experiment import RunPlan
 from muse_sdk.run_protocol import PreviewFrame, encode_preview, send_preview
 from muse_runtime.protocol import WorkerProtocol
 from muse_runtime.preview import export_model
+from muse_sdk.view_protocol import SceneObject
 plan = RunPlan.model_validate_json(Path(sys.argv[1]).read_text())
 p = WorkerProtocol(plan.run_id)
 s = socket.socket(fileno=int(os.environ['MUSE_PREVIEW_FD']))
 s.setblocking(False)
-model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body><freejoint/><geom type="box" size=".1 .2 .3"/></body></worldbody></mujoco>')
-metadata = export_model(model, Path(plan.artifact_directory), objects=[])
+model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body name="probe"><freejoint/><geom name="box" type="box" size=".1 .2 .3"/></body></worldbody></mujoco>')
+objects = [SceneObject(object_id='probe', label='Probe', kind='entity', group_id='probe', group_slot=0,
+    role_id=None, model_id='probe', body_id=model.body('probe').id, geom_ids=[model.geom('box').id])]
+metadata = export_model(model, Path(plan.artifact_directory), objects=objects)
 p.emit('preview_model', metadata.model_dump())
 p.emit('running')
 current = None
@@ -316,13 +319,17 @@ def test_paused_real_viewer_drains_to_latest_current_selection(tmp_path):
     import select
     import mujoco
     from muse_runtime.preview import export_model
+    from muse_sdk.view_protocol import SceneObject
     from muse_sdk.run_protocol import preview_socketpair
     from test_supervisor import wait_for
-    model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body><freejoint/><geom size=".1"/></body></worldbody></mujoco>')
-    metadata = export_model(model, tmp_path, objects=[])
+    model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body name="probe"><freejoint/><geom name="sphere" size=".1"/></body></worldbody></mujoco>')
+    objects = [SceneObject(object_id='probe', label='Probe', kind='entity', group_id='probe', group_slot=0,
+        role_id=None, model_id='probe', body_id=model.body('probe').id, geom_ids=[model.geom('sphere').id])]
+    metadata = export_model(model, tmp_path, objects=objects)
     sender, receiver = preview_socketpair()
     command = [sys.executable, '-m', 'muse_server.viewers.viser_process', '--snapshot-fd', str(receiver.fileno()),
-        '--model', str(tmp_path / metadata.path), '--sha256', metadata.sha256, '--nbody', str(model.nbody),
+        '--model', str(tmp_path / metadata.path), '--objects', str(tmp_path / 'preview_objects.json'),
+        '--sha256', metadata.sha256, '--nbody', str(model.nbody),
         '--run-id', 'r', '--world-count', '2', '--port', '0']
     with (tmp_path / 'viewer.log').open('wb') as log:
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
@@ -333,7 +340,7 @@ def test_paused_real_viewer_drains_to_latest_current_selection(tmp_path):
             assert json.loads(process.stdout.readline())['kind'] == 'loaded'
             settings = {'enabled': True, 'world_id': 1, 'rate_hz': 30.}
             state = {'effective': settings, 'effective_seq': 2, 'status': 'pending', 'error': None}
-            process.stdin.write((json.dumps({'kind': 'state', 'state': state}) + '\n').encode())
+            process.stdin.write((json.dumps({'kind': 'state', 'state': state, 'view_ids': []}) + '\n').encode())
             process.stdin.flush()
             os.kill(process.pid, signal.SIGSTOP)
             wait_for(lambda: Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()[0] == 'T')

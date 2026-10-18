@@ -77,6 +77,26 @@ class Supervisor:
         with self._lock:
             return self._display(run_id).patch(patch)
 
+    def register_view_client(self, run_id):
+        with self._lock:
+            return self._display(run_id).register_client()
+
+    def remove_view_client(self, run_id, view_id):
+        with self._lock:
+            self._display(run_id).remove_client(view_id)
+
+    def view_intent(self, run_id, view_id, intent):
+        with self._lock:
+            self._display(run_id).view_intent(view_id, intent)
+
+    def view_events(self, run_id, view_id):
+        with self._lock:
+            return self._display(run_id).client_events(view_id)
+
+    def entities(self, run_id):
+        with self._lock:
+            return self._display(run_id).entities()
+
     def _viewer_log_started(self):
         # 显示只在活动Worker期间启动；写入者通知真实打开事实，重启后仍可辨别缺失日志。
         record = self._active['record']
