@@ -6,7 +6,7 @@ from pathlib import Path
 import mujoco
 
 from muse_sdk.geometry import GeometryAssetFact, GeometryAssetSummary
-from .package_loader import hash_package
+from muse_sdk import content
 
 
 def inspect_environment(root: Path, scene: str) -> GeometryAssetSummary:
@@ -37,7 +37,7 @@ def main():
     args = parser.parse_args()
     summary = inspect_environment(args.root, args.scene)
     args.output.write_text(json.dumps({'geometry_summary': summary.model_dump(mode='json'),
-                                       'sha256': hash_package(args.root)}))
+                                       'sha256': content.hash_package(args.root)}))
 
 
 if __name__ == '__main__':

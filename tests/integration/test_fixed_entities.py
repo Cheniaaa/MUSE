@@ -13,7 +13,7 @@ from test_supervisor import wait_for
 
 @pytest.mark.parametrize('index', [0, 1, 2])
 def test_fixed_entities_preserve_action_layout_and_freeze_resources(pipeline, index):
-    from muse_runtime.package_loader import hash_package
+    from muse_sdk.content import hash_package
     from muse_server.resolver import resolve_experiment
     catalog, source = pipeline
     original = resolve_experiment(source, catalog.snapshot()).resolved_experiment
@@ -28,7 +28,7 @@ def test_fixed_entities_preserve_action_layout_and_freeze_resources(pipeline, in
     assert exp.activation == original.activation
     assert exp.controllers['anchor_group'] == {'id': 'none'}
     assert set(exp.bindings) == {'scout', 'guard'}
-    identity = catalog.save_experiment(exp)
+    identity = catalog.save_experiment(exp, source=request)
     plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu', max_decision_steps=2)
     model = plan.experiment.entity_models['radio_base_station']
     asset = Path(plan.resource_paths['entity_model:radio_base_station'])

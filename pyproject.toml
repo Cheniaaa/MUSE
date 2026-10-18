@@ -31,6 +31,17 @@ muse_builtins = ["assets/bitcraze_crazyflie_2/*", "assets/bitcraze_crazyflie_2/a
 
 [tool.setuptools.data-files]
 "share/muse" = ["examples/basic_flight/controller.json"]
+"share/muse/examples/basic_flight" = ["examples/basic_flight/request_train.json", "examples/basic_flight/controller.json"]
+"share/muse/examples/basic_flight/environment" = ["examples/basic_flight/environment/environment.yaml"]
+"share/muse/examples/basic_flight/environment/scene" = ["examples/basic_flight/environment/scene/scene.mjcf"]
+"share/muse/examples/basic_flight/training_package_ippo" = ["examples/basic_flight/training_package_ippo/*.py", "examples/basic_flight/training_package_ippo/*.yaml"]
+"share/muse/examples/isac_cost" = ["examples/isac_cost/request_train.json"]
+"share/muse/examples/isac_cost/environment" = ["examples/isac_cost/environment/*.yaml", "examples/isac_cost/environment/*.xml"]
+"share/muse/examples/isac_cost/training_package" = ["examples/isac_cost/training_package/*.py", "examples/isac_cost/training_package/*.yaml"]
+"share/muse/examples/hybrid_history_markov" = ["examples/hybrid_history_markov/request_train.json"]
+"share/muse/examples/hybrid_history_markov/environment" = ["examples/hybrid_history_markov/environment/*.yaml", "examples/hybrid_history_markov/environment/*.xml"]
+"share/muse/examples/hybrid_history_markov/training_package" = ["examples/hybrid_history_markov/training_package/*.py", "examples/hybrid_history_markov/training_package/*.yaml"]
+"share/muse/examples/empty_environment" = ["examples/empty_environment/environment.yaml", "examples/empty_environment/scene.xml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

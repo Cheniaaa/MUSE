@@ -33,7 +33,7 @@ def training_case(tmp_path_factory):
     request['term_config'] = {'world': {'termination': {'episode_limit': {'config': {'episode_max_steps': 4}}}}}
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     return catalog, identity, request
 
 
@@ -197,7 +197,7 @@ def test_production_example_defaults_run_two_blocks(training_case, gpu_stream):
     assert experiment.training_schedule.collection_steps == 24
     assert experiment.algorithm_config['num_learning_epochs'] == 4
     assert experiment.algorithm_config['num_mini_batches'] == 4
-    identity = catalog.save_experiment(experiment)
+    identity = catalog.save_experiment(experiment, source=production_request)
     plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0')
     rng = WorldRng(experiment.root_seed, experiment.topology.world_count, plan.device)
     env = MuseEnv(experiment, RuntimeContext(plan.device, plan.resource_paths, {}), rng)

@@ -23,7 +23,7 @@ def test_cooperative_registration_and_resolution(pipeline, tmp_path):
     assert exp.task_spec.published_fields['phase'].shape == [2, 1]
     assert exp.task_config == {'learning_horizon': 3}
     assert exp.training_schedule.collection_steps == 4
-    identity = catalog.save_experiment(exp)
+    identity = catalog.save_experiment(exp, source=request)
     assert catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=8).experiment == exp
     request['algorithm_config']['share_actor_parameters'] = False
     assert resolve_experiment(request, catalog.snapshot()).valid

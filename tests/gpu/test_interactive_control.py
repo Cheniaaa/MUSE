@@ -28,7 +28,7 @@ def test_interactive_subset_reset_freezes_learning_and_refreshes_preview(pipelin
                                       recurrent={'type': recurrent, 'hidden_size': 16})
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=4)
     with initialized(source) as (env, learner):
         run(env, learner, lambda: None, lambda *_: None, mode='TRAIN',

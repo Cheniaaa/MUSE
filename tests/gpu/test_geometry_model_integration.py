@@ -67,7 +67,7 @@ def freeze_plan(catalog, source, batch_size, *, geometry=True):
         del request['scenario']['radio_geometry']
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     return catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0')
 
 

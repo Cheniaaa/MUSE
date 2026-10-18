@@ -22,7 +22,7 @@ def sensing_env(catalog, request):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     experiment = report.resolved_experiment
-    identity = catalog.save_experiment(experiment)
+    identity = catalog.save_experiment(experiment, source=request)
     plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0', max_decision_steps=200)
     with load_package(Path(plan.resource_paths['training_package'])) as package:
         registered = {'builtin:' + name: cls for name, cls in

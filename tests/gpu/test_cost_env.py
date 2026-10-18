@@ -117,7 +117,7 @@ def cost_plans(pipeline, tmp_path_factory):
             }
         report = resolve_experiment(candidate, catalog.snapshot())
         assert report.valid, report.errors
-        identity = catalog.save_experiment(report.resolved_experiment)
+        identity = catalog.save_experiment(report.resolved_experiment, source=candidate)
         plans[enabled] = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
     return plans
 

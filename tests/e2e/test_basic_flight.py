@@ -55,7 +55,9 @@ def register(client):
     request = json.loads((example / 'request_train.json').read_text())
     request.update(environment_id=env['resource_id'], environment_revision=env['revision'],
                    training_package_id=package['resource_id'], training_package_revision=package['revision'])
-    models = response_json(client.get('/catalog/entity-models'))
+    models_page = response_json(client.get('/catalog/entity-models'))
+    assert models_page['next_offset'] is None
+    models = {model['resource_id']: model for model in models_page['items']}
     for group in request['scenario']['entity_groups']:
         model = models[group['model_id']]
         group.update(model_id=model['resource_id'], model_revision=model['revision'])

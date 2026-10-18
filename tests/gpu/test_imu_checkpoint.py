@@ -61,7 +61,7 @@ def test_worker_checkpoint_restore_has_initial_imu_before_first_step(tmp_path, m
     request['algorithm_config'].update(collection_steps=4, num_learning_epochs=1, num_mini_batches=1)
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=4)
 
     original_run, original_load = driver.run, checkpoint_module.load_checkpoint

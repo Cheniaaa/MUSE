@@ -251,7 +251,7 @@ def test_real_cpu_checkpoint_accepts_equivalent_rates_and_rejects_changed_device
     catalog, _ = pipeline
     request, snapshot, _ = range_case(pipeline)
     first = resolved(request, snapshot)
-    plan = catalog.create_run_plan(catalog.save_experiment(first), mode='EVALUATE', device='cpu')
+    plan = catalog.create_run_plan(catalog.save_experiment(first, source=request), mode='EVALUATE', device='cpu')
     artifact = publish_checkpoint(plan, SimpleNamespace(learning_state_dict=lambda: {'updates': 7}), steps=4, updates=7)
     record = {'run_id': plan.run_id, 'artifact_directory': plan.artifact_directory,
               'plan_path': str(Path(plan.artifact_directory) / 'resolved_run_plan.json'),

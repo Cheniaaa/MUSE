@@ -63,7 +63,7 @@ def build_plan(root, progress=False, shared_group=False, worlds=2, history=0):
         request[f'{kind}_revision'] = resource.revision
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     return catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0')
 
 

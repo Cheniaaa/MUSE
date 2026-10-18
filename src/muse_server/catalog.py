@@ -1,5 +1,6 @@
 """CPU资源目录，SQLite直接持久化，用户代码仅在one-shot子进程执行。"""
 import json
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 import shutil
 import sqlite3
@@ -19,10 +20,23 @@ from muse_sdk.experiment import (
 from .storage import extract_archive, read_document, write_json_new, validate_bundled_assets, verify_checkpoint_file
 
 
+API_REVISION = 2
+
+
 class Catalog:
     def __init__(self, directory: Path, builtin_metadata: Path):
         self.directory = Path(directory).resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
+        identity_path = self.directory / 'catalog-metadata.json'
+        if identity_path.exists():
+            identity = json.loads(identity_path.read_text())
+            if identity['api_revision'] != API_REVISION:
+                raise ConfigError('data_dir', 'Unsupported API revision; use a new data directory')
+        else:
+            if any(self.directory.iterdir()):
+                raise ConfigError('data_dir', 'Legacy or nonempty directory; use a new data directory')
+            identity = {'api_revision': API_REVISION, 'catalog_id': uuid4().hex}
+        self.catalog_id = identity['catalog_id']
         self.builtin_path = self.directory / 'builtin-metadata.json'
         incoming = BuiltinMetadata.model_validate_json(Path(builtin_metadata).read_text())
         parse_descriptor_json(incoming.descriptor.model_dump_json())
@@ -44,8 +58,12 @@ class Catalog:
                 CREATE TABLE IF NOT EXISTS resources (
                     id TEXT NOT NULL, revision INTEGER NOT NULL, kind TEXT NOT NULL,
                     record TEXT NOT NULL, PRIMARY KEY (id, revision));
-                CREATE TABLE IF NOT EXISTS experiments (id TEXT PRIMARY KEY, definition TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS experiments (
+                    id TEXT PRIMARY KEY, definition TEXT NOT NULL, source TEXT NOT NULL,
+                    label TEXT NOT NULL, created_at TEXT NOT NULL);
             ''')
+        if not identity_path.exists():
+            write_json_new(identity_path, json.dumps(identity))
 
     def _connect(self):
         return sqlite3.connect(self.database)
@@ -115,11 +133,37 @@ class Catalog:
                        db.execute('SELECT record FROM resources ORDER BY id, revision')]
         return CatalogSnapshot(resources=records, builtins=self.builtins.model_copy(deep=True))
 
-    def save_experiment(self, experiment: ExperimentDefinition) -> str:
+    def list_resources(self, kind: str, *, offset: int = 0, limit: int = 50) -> dict:
+        with self._connect() as db:
+            rows = db.execute('SELECT record FROM resources WHERE kind=? ORDER BY id,revision LIMIT ? OFFSET ?',
+                              (kind, limit + 1, offset)).fetchall()
+        return {'items': [json.loads(row[0]) for row in rows[:limit]],
+                'next_offset': offset + limit if len(rows) > limit else None}
+
+    def save_experiment(self, experiment: ExperimentDefinition, *, source: dict, label: str = '') -> str:
         identity = uuid4().hex
         with self._connect() as db:
-            db.execute('INSERT INTO experiments VALUES (?, ?)', (identity, experiment.model_dump_json()))
+            db.execute('INSERT INTO experiments VALUES (?, ?, ?, ?, ?)',
+                       (identity, experiment.model_dump_json(), json.dumps(source, allow_nan=False),
+                        label, datetime.now(timezone.utc).isoformat()))
         return identity
+
+    def list_experiments(self, *, offset: int = 0, limit: int = 50) -> dict:
+        with self._connect() as db:
+            rows = db.execute('''SELECT id,label,created_at,
+                json_extract(definition,'$.environment'),json_extract(definition,'$.training_package'),
+                json_extract(definition,'$.composition_id') FROM experiments
+                ORDER BY rowid LIMIT ? OFFSET ?''', (limit + 1, offset)).fetchall()
+        return {'items': [dict(id=row[0], label=row[1], created_at=row[2], environment=json.loads(row[3]),
+                              training_package=json.loads(row[4]), composition_id=row[5]) for row in rows[:limit]],
+                'next_offset': offset + limit if len(rows) > limit else None}
+
+    def get_experiment_source(self, identity: str) -> dict:
+        with self._connect() as db:
+            row = db.execute('SELECT source FROM experiments WHERE id=?', (identity,)).fetchone()
+        if row is None:
+            raise ConfigError('experiment_id', 'Unknown experiment')
+        return json.loads(row[0])
 
     def get_experiment(self, identity: str) -> ExperimentDefinition:
         with self._connect() as db:

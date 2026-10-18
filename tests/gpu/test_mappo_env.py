@@ -15,7 +15,7 @@ def cooperative_plan(pipeline, tmp_path):
     catalog, request = cooperative_pipeline(pipeline, tmp_path)
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     return catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
 
 

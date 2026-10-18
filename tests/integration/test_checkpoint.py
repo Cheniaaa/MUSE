@@ -126,6 +126,7 @@ def test_checkpoint_compatibility_and_mode_boundaries(published):
     client, identity, exp, _, checkpoints = published
     catalog = client.app.state.catalog
     artifact_id = checkpoints[0]['id']
+    source_request = catalog.get_experiment_source(identity)
     for field in ('algorithm_config', 'environment', 'entity_models', 'scenario', 'controllers', 'sensors',
                   'environment_scene', 'environment_metadata', 'algorithm_inputs'):
         target = catalog.get_experiment(identity)
@@ -136,7 +137,8 @@ def test_checkpoint_compatibility_and_mode_boundaries(published):
         elif field == 'environment_scene': target.environment_scene = 'another.xml'
         elif field == 'algorithm_inputs': next(iter(target.algorithm_inputs.actors.values())).reverse()
         else: getattr(target, field)['changed'] = {}
-        target_id = catalog.save_experiment(target)
+        # 故意篡改冻结字段以验证checkpoint拒绝；来源保留该负例的原始提交请求。
+        target_id = catalog.save_experiment(target, source=source_request)
         response = client.post('/runs', json=dict(experiment_id=target_id, mode='EVALUATE',
             max_decision_steps=3, checkpoint_artifact_id=artifact_id))
         assert response.status_code == 422, (field, response.text)

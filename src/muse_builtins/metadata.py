@@ -12,7 +12,7 @@ from muse_sdk.descriptor import build_descriptor
 from muse_sdk.experiment import BuiltinMetadata, ResourceRecord
 from muse_sdk.geometry import RadioDeviceDefinition
 from muse_sdk.registration import TrainingPackageDefinition
-from muse_runtime.package_loader import hash_package
+from muse_sdk.content import hash_package
 
 from .algorithms import registrations as algorithm_registrations
 from .models import registrations as radio_registrations, sensing_registrations

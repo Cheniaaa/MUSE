@@ -113,7 +113,8 @@ def test_real_api_registration_resolution_run_events_and_artifacts(client):
     identity, exp = register_experiment(client)
     assert client.get(f'/experiments/{identity}').json() == exp
     for name in ('environments', 'training-packages', 'entity-models', 'controllers', 'sensors'):
-        assert client.get('/catalog/' + name).json()
+        page = client.get('/catalog/' + name).json()
+        assert page['items'] and page['next_offset'] is None
     created = client.post('/runs', json=dict(experiment_id=identity, mode='EVALUATE', max_decision_steps=8))
     assert created.status_code == 201, created.text
     run_id = created.json()['run_id']

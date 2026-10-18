@@ -12,11 +12,12 @@ from .protocol import WorkerProtocol
 
 
 def execute(plan, protocol):
-    from .package_loader import hash_package, load_package
+    from muse_sdk import content
+    from .package_loader import load_package
     resources = {'environment': plan.experiment.environment,
                  **{'entity_model:' + name: ref for name, ref in plan.experiment.entity_models.items()}}
     for name, reference in resources.items():
-        if hash_package(Path(plan.resource_paths[name])) != reference.sha256:
+        if content.hash_package(Path(plan.resource_paths[name])) != reference.sha256:
             raise ValueError(f'Frozen resource hash mismatch: {name}')
     with load_package(Path(plan.resource_paths['training_package'])) as package:
         if package.package_hash != plan.experiment.training_package.sha256:

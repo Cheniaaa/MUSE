@@ -124,7 +124,7 @@ def test_real_mixed_registration_and_heads(pipeline, tmp_path):
     assert rover_terms['previous_action'].input_fields[0].tensor.shape == [2, 1, 2]
     assert [x.selection_id for x in exp.selections if x.term_kind == 'termination'] == [
         'scout_collision', 'rover_collision', 'episode_limit']
-    identity = catalog.save_experiment(exp)
+    identity = catalog.save_experiment(exp, source=request)
     plan = catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=8)
     assert plan.max_decision_steps == 8
     assert plan.experiment.model_dump_json() == exp.model_dump_json()

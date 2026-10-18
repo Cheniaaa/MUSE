@@ -50,7 +50,7 @@ def test_real_registration_and_frozen_flight_experiment(pipeline):
     other = resolve_experiment(request_copy, snapshot)
     assert other.valid, other.errors
     assert exp.model_dump_json() == before
-    identity = catalog.save_experiment(exp)
+    identity = catalog.save_experiment(exp, source=request)
     assert catalog.get_experiment(identity).model_dump_json() == before
     plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu')
     assert plan.experiment.model_dump_json() == before
@@ -280,7 +280,7 @@ def test_two_same_role_selections_have_independent_resolved_values(pipeline):
 def test_unsupported_run_mode_or_rule_checkpoint_cannot_create_plan(pipeline, mode, checkpoint, message):
     from muse_server.resolver import resolve_experiment
     catalog, request = pipeline
-    identity = catalog.save_experiment(resolve_experiment(request, catalog.snapshot()).resolved_experiment)
+    identity = catalog.save_experiment(resolve_experiment(request, catalog.snapshot()).resolved_experiment, source=request)
     with pytest.raises(ValueError, match=message):
         catalog.create_run_plan(identity, mode=mode, device='cuda:0', checkpoint_artifact_id=checkpoint)
 

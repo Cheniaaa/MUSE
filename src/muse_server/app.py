@@ -6,18 +6,28 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from muse_sdk.config import ConfigError
 from muse_sdk.experiment import ExperimentRequest, ScenarioDefinition
 from muse_sdk.run_protocol import DisplayPatch, InteractiveCommand, RunRequest, RunTimeouts
 
-from .catalog import Catalog
+from .catalog import API_REVISION, Catalog
 from .resolver import resolve_experiment
 from .inspection import inspect_experiment
 from .supervisor import Supervisor, TERMINAL_STATES, worker_command as default_worker_command
+
+
+PageOffset = Annotated[int, Query(ge=0)]
+PageLimit = Annotated[int, Query(ge=1, le=200)]
+
+
+def _catalog_page(items, offset, limit):
+    return {'items': items[offset:offset + limit],
+            'next_offset': offset + limit if offset + limit < len(items) else None}
 
 
 def bootstrap(data_dir, controller_path=None):
@@ -28,7 +38,7 @@ def bootstrap(data_dir, controller_path=None):
         controller = Path(controller_path) if controller_path else Path(__file__).resolve().parents[2] / 'examples/basic_flight/controller.json'
         if not controller.exists() and controller_path is None:
             controller = Path(sys.prefix) / 'share/muse/controller.json'
-        with tempfile.TemporaryDirectory(dir=directory) as temporary:
+        with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'metadata.json'
             subprocess.run([sys.executable, '-m', 'muse_builtins.metadata', '--controller', str(controller),
                             '--output', str(output)], check=True, capture_output=True, text=True)
@@ -68,29 +78,32 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         error = app.state.supervisor.error
         return JSONResponse(status_code=503 if error else 200,
                             content={'status': 'error' if error else 'ok', 'error': error,
-                                     'gpu_busy': app.state.supervisor.gpu_busy})
+                                     'gpu_busy': app.state.supervisor.gpu_busy,
+                                     'api_revision': API_REVISION, 'catalog_id': app.state.catalog.catalog_id,
+                                     'platform_revision': app.state.catalog.builtins.platform_revision})
 
     @app.get('/catalog/environments')
-    def environments():
-        return [r for r in app.state.catalog.snapshot().resources if r.kind == 'environment']
+    def environments(offset: PageOffset = 0, limit: PageLimit = 50):
+        return app.state.catalog.list_resources('environment', offset=offset, limit=limit)
 
     @app.get('/catalog/schema')
     def catalog_schema():
-        return {'api_revision': 2, 'experiment_request': ExperimentRequest.model_json_schema(),
+        return {'api_revision': API_REVISION, 'experiment_request': ExperimentRequest.model_json_schema(),
                 'scenario': ScenarioDefinition.model_json_schema(), 'run_request': RunRequest.model_json_schema()}
 
     @app.get('/catalog/networks')
-    def networks():
-        from muse_sdk.network import NetworkSelection
+    def networks(offset: PageOffset = 0, limit: PageLimit = 50):
         descriptor = app.state.catalog.builtins.descriptor
-        return {'radio_models': descriptor.radio_models, 'sensing_models': descriptor.sensing_models,
-                'scenario_network': NetworkSelection.model_json_schema()}
+        items = [dict(kind=kind, reference='builtin:' + identity, descriptor=entries[identity])
+                 for kind, entries in (('radio', descriptor.radio_models), ('sensing', descriptor.sensing_models))
+                 for identity in sorted(entries)]
+        return _catalog_page(items, offset, limit)
 
     @app.get('/catalog/training-packages')
-    def training_packages():
-        return [r for r in app.state.catalog.snapshot().resources if r.kind == 'training_package']
+    def training_packages(offset: PageOffset = 0, limit: PageLimit = 50):
+        return app.state.catalog.list_resources('training_package', offset=offset, limit=limit)
 
-    async def upload(request, kind):
+    async def upload(request, kind, resource_id):
         if request.headers.get('content-type', '').split(';')[0] != 'application/zip':
             raise HTTPException(415, 'Expected application/zip binary body (not multipart)')
         content = await request.body()
@@ -99,7 +112,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
                 path = Path(temporary) / 'upload.zip'
                 path.write_bytes(content)
                 try:
-                    return app.state.catalog.register_archive(kind, path)
+                    return app.state.catalog.register_archive(kind, path, resource_id=resource_id)
                 except ConfigError:
                     raise
                 except (ValueError, FileNotFoundError) as exc:
@@ -109,26 +122,39 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
     @app.post('/catalog/environments', status_code=201,
               openapi_extra={'requestBody': {'required': True, 'content': {'application/zip': {
                   'schema': {'type': 'string', 'format': 'binary'}}}}})
-    async def register_environment(request: Request):
-        return await upload(request, 'environment')
+    async def register_environment(request: Request, resource_id: str | None = None):
+        return await upload(request, 'environment', resource_id)
 
     @app.post('/catalog/training-packages', status_code=201,
               openapi_extra={'requestBody': {'required': True, 'content': {'application/zip': {
                   'schema': {'type': 'string', 'format': 'binary'}}}}})
-    async def register_training_package(request: Request):
-        return await upload(request, 'training_package')
+    async def register_training_package(request: Request, resource_id: str | None = None):
+        return await upload(request, 'training_package', resource_id)
 
     @app.get('/catalog/entity-models')
-    def entity_models():
-        return app.state.catalog.builtins.entity_models
+    def entity_models(offset: PageOffset = 0, limit: PageLimit = 50):
+        entries = app.state.catalog.builtins.entity_models
+        return _catalog_page([entries[key] for key in sorted(entries)], offset, limit)
 
     @app.get('/catalog/controllers')
-    def controllers():
-        return app.state.catalog.builtins.controllers
+    def controllers(offset: PageOffset = 0, limit: PageLimit = 50):
+        entries = app.state.catalog.builtins.controllers
+        return _catalog_page([entries[key] for key in sorted(entries)], offset, limit)
 
     @app.get('/catalog/sensors')
-    def sensors():
-        return app.state.catalog.builtins.sensors
+    def sensors(offset: PageOffset = 0, limit: PageLimit = 50):
+        entries = app.state.catalog.builtins.sensors
+        return _catalog_page([entries[key] for key in sorted(entries)], offset, limit)
+
+    @app.get('/catalog/examples')
+    def examples(offset: PageOffset = 0, limit: PageLimit = 50):
+        from .examples import list_examples
+        return _catalog_page(list_examples(), offset, limit)
+
+    @app.post('/catalog/examples/{example_id}/import', status_code=201)
+    def import_template(example_id: str):
+        from .examples import import_example
+        return import_example(app.state.catalog, example_id)
 
     @app.post('/experiments/validate')
     def validate_experiment(request: dict):
@@ -139,11 +165,20 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         return inspect_experiment(request, app.state.catalog.snapshot())
 
     @app.post('/experiments', status_code=201)
-    def save_experiment(request: dict):
+    def save_experiment(request: dict, label: str = ''):
         report = resolve_experiment(request, app.state.catalog.snapshot())
         if not report.valid:
             return JSONResponse(status_code=422, content=report.model_dump(mode='json'))
-        return {'experiment_id': app.state.catalog.save_experiment(report.resolved_experiment)}
+        return {'experiment_id': app.state.catalog.save_experiment(report.resolved_experiment,
+                                                                  source=request, label=label)}
+
+    @app.get('/experiments')
+    def list_experiments(offset: PageOffset = 0, limit: PageLimit = 50):
+        return app.state.catalog.list_experiments(offset=offset, limit=limit)
+
+    @app.get('/experiments/{experiment_id}/source')
+    def get_experiment_source(experiment_id: str):
+        return app.state.catalog.get_experiment_source(experiment_id)
 
     @app.get('/experiments/{experiment_id}')
     def get_experiment(experiment_id: str):

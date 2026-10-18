@@ -33,7 +33,7 @@ def mixed_plan(tmp_path_factory):
     request['term_config'] = {'world': {'termination': {'episode_limit': {'config': {'episode_max_steps': 500}}}}}
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     return catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
 
 

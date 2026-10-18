@@ -67,7 +67,7 @@ def test_checkpoint_batch_restore_and_frozen_evaluate(training_case, gpu_stream)
     target_request['root_seed'] = source.experiment.root_seed + 1
     report = resolve_experiment(target_request, catalog.snapshot())
     assert report.valid, report.errors
-    target_id = catalog.save_experiment(report.resolved_experiment)
+    target_id = catalog.save_experiment(report.resolved_experiment, source=target_request)
     target = catalog.create_run_plan(target_id, mode='TRAIN', device='cuda:0', max_decision_steps=8)
     target.checkpoint = reference
     with initialized(target) as (env, algorithm):

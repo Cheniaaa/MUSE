@@ -44,5 +44,5 @@ def indoor_radio_plan(root, *, steps=200, **kwargs):
     catalog, request = indoor_radio_catalog(root, **kwargs)
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     return catalog, catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0', max_decision_steps=steps)

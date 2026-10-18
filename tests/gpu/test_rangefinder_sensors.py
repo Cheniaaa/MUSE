@@ -75,7 +75,7 @@ def make_range_plan(root, *, enabled=True, task=False, period=73, imu_only=False
     payload['role_config']['guard'] = dict(group_id=first['group_id'], slots=[2, 0])
     report = resolve_experiment(payload, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=payload)
     return catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0')
 
 

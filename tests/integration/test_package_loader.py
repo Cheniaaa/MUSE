@@ -10,7 +10,8 @@ import sys
 import pytest
 
 from muse_sdk.config import ConfigError
-from muse_runtime.package_loader import hash_package, load_package
+from muse_sdk.content import hash_package
+from muse_runtime.package_loader import load_package
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -268,7 +269,8 @@ def test_existing_bytecode_cannot_override_hashed_source(fixture_root, tmp_path)
     import os
     import py_compile
     import shutil
-    from muse_runtime.package_loader import hash_package, load_package
+    from muse_sdk.content import hash_package
+    from muse_runtime.package_loader import load_package
     package = tmp_path / 'stale-cache'
     shutil.copytree(fixture_root, package, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     source = package / 'deferred.py'

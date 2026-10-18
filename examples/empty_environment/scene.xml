@@ -1,0 +1,6 @@
+<mujoco model="empty_environment">
+  <worldbody>
+    <light pos="0 0 5"/>
+    <geom name="ground" type="plane" size="10 10 0.1" rgba="0.4 0.5 0.4 1"/>
+  </worldbody>
+</mujoco>

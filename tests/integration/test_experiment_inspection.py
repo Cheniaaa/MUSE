@@ -135,5 +135,6 @@ def test_inspection_and_schema_http_are_cpu_catalog_views(pipeline):
         assert inspected.status_code == 200
         assert inspected.json()['resolved_experiment'] == checked.json()['resolved_experiment']
         networks = client.get('/catalog/networks').json()
-        assert 'free_space_radio' in networks['radio_models']
+        assert any(item['reference'] == 'builtin:free_space_radio' and item['kind'] == 'radio'
+                   for item in networks['items'])
         assert 'network' in schemas['scenario']['properties']

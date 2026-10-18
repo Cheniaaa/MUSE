@@ -58,7 +58,7 @@ def reference_env(catalog, request):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     experiment = report.resolved_experiment
-    identity = catalog.save_experiment(experiment)
+    identity = catalog.save_experiment(experiment, source=request)
     plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0',
                                    max_decision_steps=experiment.training_schedule.collection_steps)
     with load_package(Path(plan.resource_paths['training_package'])) as package:

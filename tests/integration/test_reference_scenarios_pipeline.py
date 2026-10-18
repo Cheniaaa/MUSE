@@ -24,7 +24,7 @@ def test_benchmark_variants_resolve_with_real_catalog(tmp_path):
             request[kind + '_id'], request[kind + '_revision'] = resource.resource_id, resource.revision
         report = resolve_experiment(request, catalog.snapshot())
         assert report.valid, (variant['name'], report.errors)
-        identity = catalog.save_experiment(report.resolved_experiment)
+        identity = catalog.save_experiment(report.resolved_experiment, source=request)
         initial = catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=1)
         assert initial.experiment.training_schedule.collection_steps == 32
 
@@ -35,7 +35,7 @@ def test_partial_budget_run_uses_unchanged_collection_horizon(tmp_path, budget):
                                          costs=False, history_length=4, worlds=2)
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     plan = catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=budget)
     assert plan.experiment.training_schedule.collection_steps == 32
     assert plan.max_decision_steps == budget

@@ -20,7 +20,7 @@ def history_env(pipeline, tmp_path, gpu_stream):
             'rover_target': {'history_length': 4}, 'phase': {'history_length': 4}}}}}
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
     definition = example_definition()
     cpu_rng, gpu_rng = torch.random.get_rng_state().clone(), torch.cuda.get_rng_state().clone()

@@ -39,7 +39,7 @@ def make_plan(tmp_path, run_id='run1', **timeouts):
                    training_package_id=pkg.resource_id, training_package_revision=pkg.revision)
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0', max_decision_steps=8,
                                    timeouts=RunTimeouts(**timeouts))
     return catalog, plan

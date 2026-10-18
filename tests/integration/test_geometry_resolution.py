@@ -42,7 +42,7 @@ def test_geometry_is_frozen_through_experiment_and_run_plan(pipeline, tmp_path):
     assert len(exp.geometry.layout.desired) == 2
     assert exp.geometry.blockers == ('wall',)
     assert exp.geometry.endpoint_epsilon_m > 0
-    identity = catalog.save_experiment(exp)
+    identity = catalog.save_experiment(exp, source=request)
     assert catalog.create_run_plan(identity, mode='EVALUATE', device='cpu').experiment.geometry == exp.geometry
     assert exp.model_bindings == {} and 'radio' not in exp.activation
     request['model_config'] = {'test': {}}

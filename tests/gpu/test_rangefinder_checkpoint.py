@@ -30,7 +30,7 @@ def test_worker_checkpoint_restore_has_initial_rangefinder_before_first_step(tmp
     request['algorithm_config'].update(collection_steps=4, num_learning_epochs=1, num_mini_batches=1)
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     # 8 decisions = 160 physics ticks；4 decisions的旧IMU预算不足以触发5Hz range更新。
     source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
 

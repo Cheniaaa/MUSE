@@ -169,6 +169,7 @@ def test_worker_routes_ack_and_services_preview_while_paused(monkeypatch, cancel
     """保留真实 worker/driver/preview，仅替换 GPU、包加载和物理边界。"""
     from contextlib import nullcontext
     import sys
+    from muse_sdk import content
     from muse_runtime import package_loader, preview, rng, worker
 
     events, packets = [], []
@@ -200,7 +201,7 @@ def test_worker_routes_ack_and_services_preview_while_paused(monkeypatch, cancel
     algorithm.initialize = lambda *_: None
     package = NS(package_hash='hash', definition=NS(terms={}, algorithms={'test': lambda _: algorithm},
                                                   radio_models={}, sensing_models={}))
-    monkeypatch.setattr(package_loader, 'hash_package', lambda _: 'hash')
+    monkeypatch.setattr(content, 'hash_package', lambda _: 'hash')
     monkeypatch.setattr(package_loader, 'load_package', lambda _: nullcontext(package))
     monkeypatch.setitem(sys.modules, 'muse_runtime.env', NS(MuseEnv=lambda *_: env,
         RuntimeContext=lambda *_: NS(device='cpu')))

@@ -65,7 +65,7 @@ def test_real_cost_training_checkpoint_new_episode_and_eval_freeze(pipeline, tmp
     request['algorithm_config'].update(share_actor_parameters=False, recurrent={'type': 'gru', 'hidden_size': 16})
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=request)
     source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=12)
     with initialized(source) as (env, learner):
         assert set(learner.children) == {'scout/slot/0', 'rover/slot/0', 'rover/slot/1'}

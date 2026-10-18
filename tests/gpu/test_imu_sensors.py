@@ -62,7 +62,7 @@ def make_imu_plan(root, period=3, enabled=True, task=False):
     payload['scenario']['scene']['viscosity'] = 0.
     report = resolve_experiment(payload, catalog.snapshot())
     assert report.valid, report.errors
-    identity = catalog.save_experiment(report.resolved_experiment)
+    identity = catalog.save_experiment(report.resolved_experiment, source=payload)
     return catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0')
 
 
