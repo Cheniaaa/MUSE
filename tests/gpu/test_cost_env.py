@@ -94,11 +94,12 @@ def cost_plans(pipeline, tmp_path_factory):
     entry = package / '__init__.py'
     entry.write_text(entry.read_text() + COST_PACKAGE)
     composition_path = package / 'training_package.yaml'
-    composition = yaml.safe_load(composition_path.read_text())
+    package_config = yaml.safe_load(composition_path.read_text())
+    composition = package_config['compositions']['default']
     for role, name in [('scout', 'energy'), ('rover', 'effort')]:
         composition['agent_roles'][role]['cost_terms'] = [{'selection_id': name, 'term': name}]
     composition['world_cost_terms'] = [{'selection_id': 'risk', 'term': 'risk'}]
-    composition_path.write_text(yaml.safe_dump(composition, sort_keys=False))
+    composition_path.write_text(yaml.safe_dump(package_config, sort_keys=False))
     resource = catalog.register_archive('training_package', archive(package, root / 'cost.zip'))
     request.update(training_package_id=resource.resource_id, training_package_revision=resource.revision)
     constraint = dict(discount=.9, budget=2., lambda_initial=.1, lambda_learning_rate=.01)

@@ -30,7 +30,8 @@ def make_range_plan(root, *, enabled=True, task=False, period=73, imu_only=False
     package = root / 'package'
     shutil.copytree(example / 'training_package', package)
     composition_path = package / 'training_package.yaml'
-    composition = yaml.safe_load(composition_path.read_text())
+    package_config = yaml.safe_load(composition_path.read_text())
+    composition = package_config['compositions']['default']
     for role in composition['agent_roles'].values():
         role['observation_terms'].extend(dict(selection_id=name, term='builtin:' + name,
             default_enabled=enabled) for name in ('imu_gyro', 'imu_specific_force', 'imu_valid', 'imu_age',
@@ -48,7 +49,7 @@ def make_range_plan(root, *, enabled=True, task=False, period=73, imu_only=False
             '    definition.tasks["rangefinder_task"] = RangefinderTask\n'
             '    return definition\n')
         composition['task'] = 'rangefinder_task'
-    composition_path.write_text(yaml.safe_dump(composition, sort_keys=False))
+    composition_path.write_text(yaml.safe_dump(package_config, sort_keys=False))
     environment = root / 'environment'
     shutil.copytree(example / 'environment', environment)
     scene_file = environment / yaml.safe_load((environment / 'environment.yaml').read_text())['scene']
@@ -59,8 +60,6 @@ def make_range_plan(root, *, enabled=True, task=False, period=73, imu_only=False
       <geom name="noncolliding" type="box" pos="30 0 .5" size="1 1 .5" contype="0" conaffinity="0"/>
     </worldbody></mujoco>''')
     payload = json.loads((example / 'request.json').read_text())
-    if task:
-        payload['task_id'] = 'rangefinder_task'
     for kind, source in [('environment', environment), ('training_package', package)]:
         resource = catalog.register_archive(kind, archive(source, root / (kind + '.zip')))
         payload[kind + '_id'], payload[kind + '_revision'] = resource.resource_id, resource.revision

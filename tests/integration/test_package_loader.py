@@ -48,7 +48,8 @@ def test_relative_import_and_package_data(package_dir):
         assert namespace + '.deferred' in sys.modules
         assert loaded.root == package_dir
         assert loaded.package_hash == hash_package(package_dir)
-        assert loaded.composition['algorithm'] == 'cpu_rule'
+        assert loaded.default_composition_id == 'default'
+        assert loaded.compositions['default']['algorithm'] == 'cpu_rule'
     assert not any(n == namespace or n.startswith(namespace + '.') for n in sys.modules)
     assert (sys.path, Path.cwd()) == (before_path, before_cwd)
 

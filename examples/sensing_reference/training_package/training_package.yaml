@@ -1,39 +1,42 @@
-algorithm: sensing_reference_rule
-algorithm_config:
-  phases:
-    - duration_decisions: 50
-      roles:
-        alpha: {motion: [0, 0.1, 0, 0], power_w: 0, channel_id: 7}
-        beta: {motion: [0, 0.1, 0, 0], power_w: 0, channel_id: -3}
-    - duration_decisions: 50
-      roles:
-        alpha: {motion: [0, 0.1, 0, 0], power_w: 0.0001, channel_id: 7}
-        beta: {motion: [0, 0.1, 0, 0], power_w: 0.0001, channel_id: -3}
-    - duration_decisions: 50
-      roles:
-        alpha: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: 7}
-        beta: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
-    - duration_decisions: 50
-      roles:
-        alpha: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
-        beta: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
-model_bindings:
-  radio: 'builtin:free_space_radio'
-  sensing: 'builtin:free_space_path_length_efim_2d'
-agent_roles:
-  alpha:
-    entity_kind: aerial_vehicle
-    action_interfaces: {motion: body_velocity, radio: power_channel}
-    observation_terms:
-      - {selection_id: measurement, term: 'builtin:local_path_length', config: {sensing_id: alpha_probe, range_scale_m: 100}}
-  beta:
-    entity_kind: aerial_vehicle
-    action_interfaces: {motion: body_velocity, radio: power_channel}
-    observation_terms:
-      - {selection_id: measurement, term: 'builtin:local_path_length', config: {sensing_id: beta_probe, range_scale_m: 100}}
-world_reward_terms:
-  - {selection_id: rate, term: radio_rate}
-world_cost_terms:
-  - {selection_id: position_bound, term: 'builtin:position_bound_violation', config: {position_bound_limit_m: 0.25}}
-world_termination_terms:
-  - {selection_id: episode_limit, term: 'builtin:timeout', config: {episode_max_steps: 500}}
+default_composition_id: default
+compositions:
+  default:
+    algorithm: sensing_reference_rule
+    algorithm_config:
+      phases:
+        - duration_decisions: 50
+          roles:
+            alpha: {motion: [0, 0.1, 0, 0], power_w: 0, channel_id: 7}
+            beta: {motion: [0, 0.1, 0, 0], power_w: 0, channel_id: -3}
+        - duration_decisions: 50
+          roles:
+            alpha: {motion: [0, 0.1, 0, 0], power_w: 0.0001, channel_id: 7}
+            beta: {motion: [0, 0.1, 0, 0], power_w: 0.0001, channel_id: -3}
+        - duration_decisions: 50
+          roles:
+            alpha: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: 7}
+            beta: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
+        - duration_decisions: 50
+          roles:
+            alpha: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
+            beta: {motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
+    model_bindings:
+      radio: {default: 'builtin:free_space_radio', options: {'builtin:free_space_radio': {config: {}}}}
+      sensing: {default: 'builtin:free_space_path_length_efim_2d', options: {'builtin:free_space_path_length_efim_2d': {config: {}}}}
+    agent_roles:
+      alpha:
+        entity_kind: aerial_vehicle
+        action_interfaces: {motion: body_velocity, radio: power_channel}
+        observation_terms:
+          - {selection_id: measurement, term: 'builtin:local_path_length', config: {sensing_id: alpha_probe, range_scale_m: 100}}
+      beta:
+        entity_kind: aerial_vehicle
+        action_interfaces: {motion: body_velocity, radio: power_channel}
+        observation_terms:
+          - {selection_id: measurement, term: 'builtin:local_path_length', config: {sensing_id: beta_probe, range_scale_m: 100}}
+    world_reward_terms:
+      - {selection_id: rate, term: radio_rate}
+    world_cost_terms:
+      - {selection_id: position_bound, term: 'builtin:position_bound_violation', config: {position_bound_limit_m: 0.25}}
+    world_termination_terms:
+      - {selection_id: episode_limit, term: 'builtin:timeout', config: {episode_max_steps: 500}}

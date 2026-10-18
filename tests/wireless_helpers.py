@@ -38,5 +38,6 @@ def wireless_request(pipeline, *, service=True, radio=True):
                 tensor=dict(shape=['B', 'L', 'F'], dtype='float32', units='W', frame='none', rate='radio_epoch'))
                 for phase in ('reset', 'post_physics')], state_scope='world', state_schema={},
             diagnostics_schema={}, assumptions={'synthetic': True}, output_spec={'output_blocks': ['rate']})
-        package.metadata['composition']['model_bindings'] = {'radio': 'oracle'}
+        package.metadata['compositions']['default']['model_bindings'] = {
+            'radio': {'default': 'oracle', 'options': {'oracle': {}}}}
     return request, snapshot

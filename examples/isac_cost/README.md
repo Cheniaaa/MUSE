@@ -47,9 +47,9 @@ python examples/reference_benchmark.py --server http://127.0.0.1:8001 --output b
 
 ## 固定对照
 
-MAPPO cost-off：关闭`world.cost.mission` selection并清空cost_config，Task仍报告原始约束diagnostic。IPPO cost-off不能仅改请求algorithm_id：必须从同一源码生成**新composition归档**，algorithm改`builtin:ippo`，启用各role的team reward，移除world reward/cost与critic selections及MAPPO专属配置，再注册成独立包。环境／Task／actor权限不变。
+同一包显式声明`mappo_cost_on`（默认）、`mappo_cost_off`和`ippo`三个完整组合，请求通过`composition_id`选择，不重写YAML或重新生成归档。MAPPO cost-off组合默认关闭`world.cost.mission` selection，请求清空`cost_config`，Task仍报告原始约束diagnostic。IPPO组合使用`builtin:ippo`，启用各role的team reward，移除world reward/cost与critic selections及MAPPO专属配置，请求同样清空`cost_config`。环境／Task／actor权限不变。
 
-`tests/reference_scenario_helpers.py::reference_catalog`完成上述明确组合，供测试及验收复用；不是平台算法切换兼容层。CPU验证：
+`tests/reference_scenario_helpers.py::reference_catalog`选择上述包内组合，供测试及验收复用；不是平台算法切换兼容层。CPU验证：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m pytest -p no:cacheprovider tests/unit/test_reference_tasks.py tests/integration/test_reference_scenarios_pipeline.py

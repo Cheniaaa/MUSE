@@ -31,7 +31,8 @@ def wireless_catalog(root, *, worlds=2, services=True, sensing=True, background_
     environment = catalog.register_archive('environment', archive(env, root/'env.zip'))
     package = root / 'package'
     shutil.copytree(PACKAGE, package)
-    composition = yaml.safe_load((package/'training_package.yaml').read_text())
+    package_config = yaml.safe_load((package/'training_package.yaml').read_text())
+    composition = package_config['compositions']['default']
     composition['algorithm_config']['world_power_scales'] = [1./(i+1)**2 for i in range(worlds)]
     if not services:
         composition['world_termination_terms'] = composition['world_termination_terms'][1:]
@@ -42,11 +43,12 @@ def wireless_catalog(root, *, worlds=2, services=True, sensing=True, background_
         composition['world_termination_terms'] = [composition['world_termination_terms'][-1]]
         for role in composition['agent_roles'].values():
             del role['action_interfaces']['radio']
-        composition['model_bindings'] = {} if background_only else {'sensing': 'synthetic_sensing'}
-    (package/'training_package.yaml').write_text(yaml.safe_dump(composition, sort_keys=False))
+        composition['model_bindings'] = {} if background_only else {
+            'sensing': {'default': 'synthetic_sensing', 'options': {'synthetic_sensing': {}}}}
+    (package/'training_package.yaml').write_text(yaml.safe_dump(package_config, sort_keys=False))
     request = json.loads((EXAMPLE/'request.json').read_text())
     request.update(environment_id=environment.resource_id, environment_revision=environment.revision,
-        algorithm_id='wireless_rule', algorithm_config={}, topology=dict(world_count=worlds))
+        composition_id='default', algorithm_config={}, topology=dict(world_count=worlds))
     scenario = request['scenario']
     scenario['scene'].update(control_substeps=10, physics_dt=.001)
     # IMU仍沿既有rate/整数tick契约；不同dt只改变冻结period_ticks。
@@ -113,9 +115,10 @@ def wireless_catalog(root, *, worlds=2, services=True, sensing=True, background_
                 dict(active=[True, True, False], power_w=[.5, 1., 0.], channel_id=[-3, 7, -3])],
                 transition_matrix=[[0., 1.], [1., 0.]], dwell_ticks=5, initial_state=0))]
     if transmission_sensing:
-        composition['model_bindings']['sensing'] = 'transmission_sensing'
+        composition['model_bindings']['sensing'] = {
+            'default': 'transmission_sensing', 'options': {'transmission_sensing': {}}}
     # 按最终composition真实登记，CPU descriptor不创建任何模型。
-    (package/'training_package.yaml').write_text(yaml.safe_dump(composition, sort_keys=False))
+    (package/'training_package.yaml').write_text(yaml.safe_dump(package_config, sort_keys=False))
     record = catalog.register_archive('training_package', archive(package, root/'pkg-final.zip'))
     request.update(training_package_id=record.resource_id, training_package_revision=record.revision)
     return catalog, request

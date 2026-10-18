@@ -15,8 +15,7 @@
     "scene": {"physics_dt": 0.002, "control_substeps": 20, "integrator": "RK4", "density": 1.225, "viscosity": 0.000018, "precision": "float32"},
     "command_targets_world": {"scout": [[0.2, 0.0, 1.1]], "guard": [[0.2, 1.0, 1.1], [0.2, -1.0, 1.1]]}
   },
-  "task_id": null,
-  "algorithm_id": "builtin:constant_velocity",
+  "composition_id": "default",
   "role_config": {"scout": {"group_id": "scout_group", "slots": [0]}, "guard": {"group_id": "guard_group", "slots": [0, 1]}},
   "term_config": {},
   "model_config": {},

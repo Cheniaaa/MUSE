@@ -1,49 +1,52 @@
-algorithm: builtin:mappo
-algorithm_config:
-  collection_steps: 4
-  hidden_dims: [32, 32]
-  gamma: 0.99
-  lam: 0.95
-  learning_rate: 0.0003
-  num_learning_epochs: 2
-  num_mini_batches: 2
-  share_actor_parameters: true
-task: team_progress
-task_config: {learning_horizon: 3}
-agent_roles:
-  scout:
-    entity_kind: aerial_vehicle
-    action_interfaces: {motion: body_velocity}
-    cost_terms:
-      - {selection_id: scout_squared_error, term: scout_squared_error, default_enabled: false}
-    observation_terms:
-      - {selection_id: target, term: 'builtin:relative_target', required: true}
-      - {selection_id: velocity, term: 'builtin:velocity_world', required: true}
-      - {selection_id: orientation, term: 'builtin:orientation_wxyz', required: true}
-      - {selection_id: angular_velocity, term: 'builtin:angular_velocity_body', required: true}
-      - {selection_id: previous_action, term: 'builtin:previous_action', required: true}
-  rover:
-    entity_kind: ground_vehicle
-    action_interfaces: {motion: diff_drive}
-    observation_terms:
-      - {selection_id: target, term: 'builtin:planar_target', required: true}
-      - {selection_id: velocity, term: 'builtin:planar_velocity', required: true}
-      - {selection_id: heading, term: 'builtin:heading', required: true}
-      - {selection_id: yaw_rate, term: 'builtin:yaw_rate', required: true}
-      - {selection_id: previous_action, term: 'builtin:previous_drive_action', required: true}
-critic_inputs:
-  team:
-    observation_terms:
-      - {selection_id: scout_target, term: 'builtin:relative_target', role_id: scout, required: true}
-      - {selection_id: scout_velocity, term: 'builtin:velocity_world', role_id: scout, required: true}
-      - {selection_id: rover_target, term: 'builtin:planar_target', role_id: rover, required: true}
-      - {selection_id: rover_velocity, term: 'builtin:planar_velocity', role_id: rover, required: true}
-      - {selection_id: phase, term: team_phase, required: true}
-world_reward_terms:
-  - {selection_id: team_distance, term: team_distance, required: true, weight: 1.0}
-world_cost_terms:
-  - {selection_id: team_squared_error, term: team_squared_error, default_enabled: false}
-world_termination_terms:
-  - {selection_id: scout_collision, term: 'builtin:collision', required: true, config: {controlled_role: scout}}
-  - {selection_id: rover_collision, term: 'builtin:collision', required: true, config: {controlled_role: rover}}
-  - {selection_id: episode_limit, term: 'builtin:timeout', required: true, config: {episode_max_steps: 8}}
+default_composition_id: default
+compositions:
+  default:
+    algorithm: builtin:mappo
+    algorithm_config:
+      collection_steps: 4
+      hidden_dims: [32, 32]
+      gamma: 0.99
+      lam: 0.95
+      learning_rate: 0.0003
+      num_learning_epochs: 2
+      num_mini_batches: 2
+      share_actor_parameters: true
+    task: team_progress
+    task_config: {learning_horizon: 3}
+    agent_roles:
+      scout:
+        entity_kind: aerial_vehicle
+        action_interfaces: {motion: body_velocity}
+        cost_terms:
+          - {selection_id: scout_squared_error, term: scout_squared_error, default_enabled: false}
+        observation_terms:
+          - {selection_id: target, term: 'builtin:relative_target', required: true}
+          - {selection_id: velocity, term: 'builtin:velocity_world', required: true}
+          - {selection_id: orientation, term: 'builtin:orientation_wxyz', required: true}
+          - {selection_id: angular_velocity, term: 'builtin:angular_velocity_body', required: true}
+          - {selection_id: previous_action, term: 'builtin:previous_action', required: true}
+      rover:
+        entity_kind: ground_vehicle
+        action_interfaces: {motion: diff_drive}
+        observation_terms:
+          - {selection_id: target, term: 'builtin:planar_target', required: true}
+          - {selection_id: velocity, term: 'builtin:planar_velocity', required: true}
+          - {selection_id: heading, term: 'builtin:heading', required: true}
+          - {selection_id: yaw_rate, term: 'builtin:yaw_rate', required: true}
+          - {selection_id: previous_action, term: 'builtin:previous_drive_action', required: true}
+    critic_inputs:
+      team:
+        observation_terms:
+          - {selection_id: scout_target, term: 'builtin:relative_target', role_id: scout, required: true}
+          - {selection_id: scout_velocity, term: 'builtin:velocity_world', role_id: scout, required: true}
+          - {selection_id: rover_target, term: 'builtin:planar_target', role_id: rover, required: true}
+          - {selection_id: rover_velocity, term: 'builtin:planar_velocity', role_id: rover, required: true}
+          - {selection_id: phase, term: team_phase, required: true}
+    world_reward_terms:
+      - {selection_id: team_distance, term: team_distance, required: true, weight: 1.0}
+    world_cost_terms:
+      - {selection_id: team_squared_error, term: team_squared_error, default_enabled: false}
+    world_termination_terms:
+      - {selection_id: scout_collision, term: 'builtin:collision', required: true, config: {controlled_role: scout}}
+      - {selection_id: rover_collision, term: 'builtin:collision', required: true, config: {controlled_role: rover}}
+      - {selection_id: episode_limit, term: 'builtin:timeout', required: true, config: {episode_max_steps: 8}}

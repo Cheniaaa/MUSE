@@ -11,7 +11,7 @@ import tempfile
 from pydantic import Field, ValidationError
 
 from muse_sdk.config import ConfigError, DataModel, check_json, resolve_config
-from muse_sdk.descriptor import PackageDescriptor, iter_selections, parse_descriptor_json, _reference
+from muse_sdk.descriptor import Composition, PackageDescriptor, iter_selections, parse_descriptor_json, _reference
 from muse_sdk.selection import ResolvedPackageSelection, ResolvedSelection
 from muse_sdk.experiment import (
     ActionSlice, ActionSpec, AlgorithmInputs, BoundSelection, BoundTask, CatalogSnapshot, EntityBindingPlan,
@@ -49,12 +49,13 @@ def _overrides(request: dict, allowed: dict, path=()) -> dict:
 
 
 def resolve_package_selections(descriptor: PackageDescriptor, term_config: dict,
-                               builtin_catalog: PackageDescriptor | None = None) -> ResolvedPackageSelection:
+                               builtin_catalog: PackageDescriptor | None = None, *,
+                               composition: Composition) -> ResolvedPackageSelection:
     """descriptor来自build_descriptor或parse_descriptor_json；只处理本次覆盖。"""
     check_json(term_config, 'term_config')
-    allowed = {'roles': {role: {} for role in descriptor.composition.agent_roles},
-               'critic_inputs': {group: {} for group in descriptor.composition.critic_inputs}, 'world': {}}
-    for owner, kind, selections in iter_selections(descriptor.composition):
+    allowed = {'roles': {role: {} for role in composition.agent_roles},
+               'critic_inputs': {group: {} for group in composition.critic_inputs}, 'world': {}}
+    for owner, kind, selections in iter_selections(composition):
         node = allowed
         for part in (*owner, kind):
             node = node.setdefault(part, {})
@@ -63,7 +64,7 @@ def resolve_package_selections(descriptor: PackageDescriptor, term_config: dict,
     output, inputs = [], []
     reasons = {}
     costs = set()
-    for owner, kind, selections in iter_selections(descriptor.composition):
+    for owner, kind, selections in iter_selections(composition):
         for selection in selections:
             identity = (*owner, kind, selection.selection_id)
             term = _reference(selection.term, descriptor.terms, '.'.join(identity),
@@ -267,24 +268,24 @@ def _resolve_flight(data, snapshot):
     package = _resource(snapshot, 'training_package', data.training_package_id, data.training_package_revision)
     builtins = snapshot.builtins
     descriptor = parse_descriptor_json(json.dumps(package.metadata), builtins.descriptor)
-    composition = descriptor.composition
+    if data.composition_id not in descriptor.compositions:
+        raise ConfigError('composition_id', 'Unknown package composition')
+    composition = descriptor.compositions[data.composition_id]
     if descriptor.package_hash != package.sha256:
         raise ConfigError('training_package', 'Descriptor does not match registered content hash')
-    if data.task_id != composition.task:
-        raise ConfigError('task_id', 'Select the package composition Task')
     task, task_config = None, {}
-    if data.task_id is None:
+    if composition.task is None:
         if data.task_config or composition.task_config:
             raise ConfigError('task_config', 'Task config requires a selected Task')
     else:
-        task = _reference(data.task_id, descriptor.tasks, 'task_id', builtins.descriptor.tasks)
+        task = _reference(composition.task, descriptor.tasks, 'task_id', builtins.descriptor.tasks)
         task_config = resolve_config(task.config_schema, composition.task_config, data.task_config,
                                      require_complete=True)
         if task.role_status_bindings:
             raise ConfigError('task.role_status_bindings', 'M2.5 physical fallback is not enabled; role_status bindings must be empty')
-    if data.algorithm_id != composition.algorithm:
-        raise ConfigError('algorithm_id', 'Select the package composition Algorithm')
-    algorithm = _reference(data.algorithm_id, descriptor.algorithms, 'algorithm_id', builtins.descriptor.algorithms)
+    if composition.algorithm is None:
+        raise ConfigError('composition_id', 'Selected composition requires an Algorithm')
+    algorithm = _reference(composition.algorithm, descriptor.algorithms, 'algorithm_id', builtins.descriptor.algorithms)
     algorithm_config = resolve_config(algorithm.config_schema, composition.algorithm_config,
                                       data.algorithm_config, require_complete=True)
     training_schedule = None
@@ -407,7 +408,8 @@ def _resolve_flight(data, snapshot):
     if len(owned) != sum(group.count for group in groups.values()
                          if builtins.entity_models[group.model_id].metadata['action_interfaces']):
         raise ConfigError('role_config', 'Every actionable entity needs an explicit action owner')
-    package_selection = resolve_package_selections(descriptor, data.term_config, builtins.descriptor)
+    package_selection = resolve_package_selections(descriptor, data.term_config, builtins.descriptor,
+                                                  composition=composition)
     costs = _resolve_costs(data.cost_config, package_selection, descriptor, builtins.descriptor,
                            composition.agent_roles)
     from muse_sdk.geometry import EnvironmentRF, GeometryAssetSummary, geometry_input_fields
@@ -423,8 +425,8 @@ def _resolve_flight(data, snapshot):
             environment_rf=EnvironmentRF.model_validate(rf) if rf is not None else None,
             summary=GeometryAssetSummary.model_validate(summary) if summary is not None else None,
             groups=groups, entity_models=models, endpoints=endpoints)
-    required_inputs = [(item, 'task:' + data.task_id) for item in task.input_fields] if task is not None else []
-    required_inputs.extend((item, 'algorithm:' + data.algorithm_id) for item in algorithm.observation_requirements)
+    required_inputs = [(item, 'task:' + composition.task) for item in task.input_fields] if task is not None else []
+    required_inputs.extend((item, 'algorithm:' + composition.algorithm) for item in algorithm.observation_requirements)
     for raw in package_selection.required_inputs:
         required_inputs.append((InputField.model_validate(raw['field']), '.'.join(raw['selection_identity'])))
     role_requirements = {role: [] for role in bindings}
@@ -435,7 +437,7 @@ def _resolve_flight(data, snapshot):
             item = InputField.model_validate(requirement)
             role_requirements[role].append(item)
             required_inputs.append((item, 'role:' + role))
-    network, model_bindings, network_activation = resolve_network(data, descriptor=descriptor, builtins=builtins,
+    network, model_bindings, network_activation = resolve_network(data, descriptor=descriptor, composition=composition, builtins=builtins,
         bindings=bindings, endpoints=endpoints, geometry=geometry, required_inputs=required_inputs)
     axes = {} if network is None else network_axes(network, geometry=geometry, batch_size=batch)
     if network is not None:
@@ -487,8 +489,8 @@ def _resolve_flight(data, snapshot):
         for item in task_inputs:
             if item.path[0] == 'sensor_outputs':
                 consumers = activation.setdefault('sensor:' + item.path[1], [])
-                if 'task:' + data.task_id not in consumers:
-                    consumers.append('task:' + data.task_id)
+                if 'task:' + composition.task not in consumers:
+                    consumers.append('task:' + composition.task)
     # 全部observation先于reward/cost/termination，不让role声明顺序变成执行依赖。
     observation_roles = {}
     for selection in package_selection.selections:
@@ -581,9 +583,10 @@ def _resolve_flight(data, snapshot):
         environment_scene=environment.metadata['scene'], environment_metadata=deepcopy(environment.metadata.get('metadata', {})),
         training_package=_ref(package),
         entity_models=models, platform_revision=builtins.platform_revision, scenario=data.scenario.model_copy(deep=True),
-        bindings=bindings, controllers=controllers, sensors=sensors, task_id=data.task_id, task_config=task_config,
+        bindings=bindings, controllers=controllers, sensors=sensors, composition_id=data.composition_id,
+        task_id=composition.task, task_config=task_config,
         task_spec=task_spec,
-        algorithm_id=data.algorithm_id, algorithm_config=algorithm_config, training_schedule=training_schedule,
+        algorithm_id=composition.algorithm, algorithm_config=algorithm_config, training_schedule=training_schedule,
         algorithm_inputs=algorithm_inputs, role_inputs=role_inputs, selections=selections,
         termination_reasons=package_selection.termination_reasons,
         action_specs=actions, action_layout=layout, activation=activation, model_bindings=model_bindings, costs=costs,
@@ -609,6 +612,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--descriptor', type=Path, required=True)
     parser.add_argument('--term-config', type=Path, required=True)
+    parser.add_argument('--composition-id', required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -616,7 +620,10 @@ def main(argv: list[str] | None = None) -> int:
             raise ConfigError('output', 'Output already exists')
         # JSON模式负责线格式到typed DTO的转换；不加载Python注册对象。
         descriptor = parse_descriptor_json(json.dumps(_read_json(args.descriptor), allow_nan=False))
-        result = resolve_package_selections(descriptor, _read_json(args.term_config))
+        if args.composition_id not in descriptor.compositions:
+            raise ConfigError('composition_id', 'Unknown package composition')
+        result = resolve_package_selections(descriptor, _read_json(args.term_config),
+                                             composition=descriptor.compositions[args.composition_id])
         fd, name = tempfile.mkstemp(dir=args.output.parent, prefix='.selection-')
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:

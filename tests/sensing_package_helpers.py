@@ -22,9 +22,11 @@ def sensing_catalog(root, *, model='free_space_path_length_efim_2d', worlds=2, j
     environment = catalog.register_archive('environment', archive(SENSING / 'environment', root / 'environment.zip'))
     package = root / 'package'
     shutil.copytree(SENSING / 'training_package', package)
-    composition = yaml.safe_load((package / 'training_package.yaml').read_text())
-    composition['model_bindings']['sensing'] = 'builtin:' + model
-    (package / 'training_package.yaml').write_text(yaml.safe_dump(composition, sort_keys=False))
+    package_config = yaml.safe_load((package / 'training_package.yaml').read_text())
+    composition = package_config['compositions']['default']
+    reference = 'builtin:' + model
+    composition['model_bindings']['sensing'] = {'default': reference, 'options': {reference: {}}}
+    (package / 'training_package.yaml').write_text(yaml.safe_dump(package_config, sort_keys=False))
     record = catalog.register_archive('training_package', archive(package, root / 'package.zip'))
     request = json.loads((SENSING / 'request_evaluate.json').read_text())
     request.update(environment_id=environment.resource_id, environment_revision=environment.revision,

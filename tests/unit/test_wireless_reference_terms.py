@@ -141,7 +141,7 @@ from muse_builtins.wireless_terms import registrations
 from muse_sdk.descriptor import build_descriptor, parse_descriptor_json
 from muse_sdk.registration import TrainingPackageDefinition
 terms=registrations()
-descriptor=build_descriptor(TrainingPackageDefinition(terms, {}, {}, {}, {}), {}, 'a'*64)
+descriptor=build_descriptor(TrainingPackageDefinition(terms, {}, {}, {}, {}), {}, 'a'*64, default_composition_id=None)
 restored=parse_descriptor_json(descriptor.model_dump_json())
 assert set(restored.terms)=={'local_path_length','position_bound_violation','selected_link_feedback'}
 assert not {'torch','warp'} & sys.modules.keys()

@@ -170,8 +170,7 @@ def build_training_package():
                        (EXAMPLE / 'training_package/training_package.yaml').read_text().replace('builtin:', ''))
     record = catalog.register_archive('training_package', path)
     request = copy.deepcopy(source)
-    request.update(training_package_id=record.resource_id, training_package_revision=record.revision,
-                   algorithm_id='constant_velocity')
+    request.update(training_package_id=record.resource_id, training_package_revision=record.revision)
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     assert report.resolved_experiment.algorithm_id == 'constant_velocity'
@@ -233,7 +232,7 @@ def test_disabled_selection_does_not_require_runtime_role_binding(pipeline):
     catalog, request = pipeline
     snapshot = catalog.snapshot()
     package = next(r for r in snapshot.resources if r.resource_id == request['training_package_id'] and r.revision == 1)
-    package.metadata['composition']['world_termination_terms'].append({
+    package.metadata['compositions']['default']['world_termination_terms'].append({
         'selection_id': 'unused', 'term': 'builtin:collision', 'default_enabled': False,
         'config': {'controlled_role': 'not_in_scenario'},
     })
@@ -263,7 +262,7 @@ def test_two_same_role_selections_have_independent_resolved_values(pipeline):
     catalog, source = pipeline
     snapshot = catalog.snapshot()
     package = next(r for r in snapshot.resources if r.resource_id == source['training_package_id'] and r.revision == 1)
-    package.metadata['composition']['agent_roles']['scout']['reward_terms'].append({
+    package.metadata['compositions']['default']['agent_roles']['scout']['reward_terms'].append({
         'selection_id': 'distance_aux', 'term': 'builtin:distance', 'config': {'scale': 4.0}, 'weight': 0.25})
     request = copy.deepcopy(source)
     request['term_config'] = {'roles': {'scout': {'reward': {'distance': {'config': {'scale': 3.0}}}}}}
@@ -342,7 +341,7 @@ def test_resolved_role_requirements_are_frozen(pipeline):
     requirement = {'path': ['role_positions_world', {'binding': 'role_id'}], 'phase': 'post_physics',
                    'tensor': {'shape': ['B', 'N_role', 3], 'dtype': 'float32', 'units': 'm',
                               'frame': 'world_z_up', 'rate': 'decision'}}
-    package.metadata['composition']['agent_roles']['guard']['input_requirements'] = [requirement]
+    package.metadata['compositions']['default']['agent_roles']['guard']['input_requirements'] = [requirement]
     report = resolve_experiment(request, snapshot)
     assert report.valid, report.errors
     assert report.resolved_experiment.role_inputs['guard'][0].path == ['role_positions_world', 'guard']
@@ -365,7 +364,7 @@ def test_disabling_algorithm_required_observation_is_rejected(pipeline):
     catalog, source = pipeline
     snapshot = catalog.snapshot()
     package = next(r for r in snapshot.resources if r.resource_id == source['training_package_id'] and r.revision == 1)
-    package.metadata['composition']['agent_roles']['scout']['observation_terms'][0]['required'] = False
+    package.metadata['compositions']['default']['agent_roles']['scout']['observation_terms'][0]['required'] = False
     algorithm = snapshot.builtins.descriptor.algorithms['constant_velocity']
     algorithm.actor_observation = {'scout': [InputField(
         path=['observations', 'actors', {'binding': 'role_id'}, 'target'], phase='post_observation',
@@ -390,7 +389,7 @@ def learning_report(pipeline, *, reference='builtin:ippo', horizon=4, empty_obse
     catalog, source = pipeline
     snapshot = catalog.snapshot()
     record = next(r for r in snapshot.resources if r.resource_id == source['training_package_id'])
-    composition = yaml.safe_load((EXAMPLE / 'training_package_ippo/training_package.yaml').read_text())
+    composition = yaml.safe_load((EXAMPLE / 'training_package_ippo/training_package.yaml').read_text())['compositions']['default']
     composition['algorithm'] = reference
     if empty_observations:
         for role in composition['agent_roles'].values():
@@ -402,10 +401,10 @@ def learning_report(pipeline, *, reference='builtin:ippo', horizon=4, empty_obse
         composition['world_reward_terms'] = [{'selection_id': 'team_bonus', 'term': 'team_bonus', 'weight': 1.}]
     algorithms = {} if reference.startswith('builtin:') else {reference: implementation or IPPO}
     descriptor = build_descriptor(TrainingPackageDefinition(terms, {}, algorithms, {}, {}),
-                                  composition, record.sha256, snapshot.builtins.descriptor)
+                                  {'default': composition}, record.sha256, snapshot.builtins.descriptor, default_composition_id='default')
     record.metadata = descriptor.model_dump(mode='json')
     request = copy.deepcopy(source)
-    request.update(algorithm_id=reference, algorithm_config={'collection_steps': horizon})
+    request.update(algorithm_config={'collection_steps': horizon})
     return resolve_experiment(request, snapshot)
 
 
@@ -480,12 +479,12 @@ def test_user_algorithm_declares_its_own_schedule_parameter_and_reward_scope(pip
     catalog, source = pipeline
     snapshot = catalog.snapshot()
     record = next(r for r in snapshot.resources if r.resource_id == source['training_package_id'])
-    composition = copy.deepcopy(record.metadata['composition'])
+    composition = copy.deepcopy(record.metadata['compositions']['default'])
     composition.update(algorithm='user_learner', algorithm_config={})
     descriptor = build_descriptor(TrainingPackageDefinition({}, {}, {'user_learner': UserLearner}, {}, {}),
-                                  composition, record.sha256, snapshot.builtins.descriptor)
+                                  {'default': composition}, record.sha256, snapshot.builtins.descriptor, default_composition_id='default')
     record.metadata = descriptor.model_dump(mode='json')
-    request = {**source, 'algorithm_id': 'user_learner', 'algorithm_config': {'rollout_length': 11}}
+    request = {**source, 'algorithm_config': {'rollout_length': 11}}
     report = resolve_experiment(request, snapshot)
     assert report.valid, report.errors
     assert report.resolved_experiment.training_schedule.collection_steps == 11

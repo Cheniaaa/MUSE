@@ -62,10 +62,12 @@ def test_registration_preserves_model_contract_without_execution(kind):
     impl = declared(kind, metadata(kind))
     definition = TrainingPackageDefinition({}, {}, {},
         {'sample': impl} if kind == 'radio' else {}, {'sample': impl} if kind == 'sensing' else {})
-    report = build_descriptor(definition, {'model_bindings': {kind: 'sample'}}, 'a'*64)
+    report = build_descriptor(definition, {'default': {'model_bindings': {
+        kind: {'default': 'sample', 'options': {'sample': {}}}}}}, 'a'*64, default_composition_id='default')
     restored = parse_descriptor_json(report.model_dump_json())
     assert getattr(restored, kind + '_models')['sample'].diagnostics_schema == {}
-    assert restored.composition.model_bindings == {kind: 'sample'}
+    binding = restored.compositions['default'].model_bindings[kind]
+    assert binding.default == 'sample' and set(binding.options) == {'sample'}
 
 
 @pytest.mark.parametrize('schema', [None, {
@@ -74,7 +76,8 @@ def test_registration_preserves_model_contract_without_execution(kind):
 def test_radio_frequency_schema_roundtrip(schema):
     impl = declared('radio', {**metadata(), 'frequency_hz_schema': schema})
     report = build_descriptor(TrainingPackageDefinition({}, {}, {}, {'sample': impl}, {}),
-        {'model_bindings': {'radio': 'sample'}}, 'a'*64)
+        {'default': {'model_bindings': {'radio': {'default': 'sample', 'options': {'sample': {}}}}}},
+        'a'*64, default_composition_id='default')
     assert report.radio_models['sample'].frequency_hz_schema == schema
     restored = parse_descriptor_json(report.model_dump_json())
     assert restored.radio_models['sample'].frequency_hz_schema == schema
@@ -96,7 +99,7 @@ def test_radio_frequency_schema_rejects_invalid_declarations(schema, message, en
     meta = {**metadata(), 'frequency_hz_schema': schema}
     if entry == 'json':
         report = build_descriptor(TrainingPackageDefinition({}, {}, {},
-            {'sample': declared('radio', metadata())}, {}), {}, 'a'*64)
+            {'sample': declared('radio', metadata())}, {}), {}, 'a'*64, default_composition_id=None)
         payload = report.model_dump()
         payload['radio_models']['sample']['frequency_hz_schema'] = schema
         with pytest.raises((ValueError, SchemaError), match=message):
@@ -104,7 +107,7 @@ def test_radio_frequency_schema_rejects_invalid_declarations(schema, message, en
     elif entry == 'export':
         with pytest.raises((ValueError, SchemaError), match=message):
             build_descriptor(TrainingPackageDefinition({}, {}, {},
-                {'sample': declared('radio', meta)}, {}), {}, 'a'*64)
+                {'sample': declared('radio', meta)}, {}), {}, 'a'*64, default_composition_id=None)
     else:
         with pytest.raises((ValueError, SchemaError), match=message):
             RadioDescriptor.model_validate(meta)
@@ -123,7 +126,7 @@ def test_model_registration_requires_concrete_kind(mode):
             describe = impl.describe
         impl = Abstract
     with pytest.raises(ValueError, match='radio'):
-        build_descriptor(TrainingPackageDefinition({}, {}, {}, {'sample': impl}, {}), {}, 'a'*64)
+        build_descriptor(TrainingPackageDefinition({}, {}, {}, {'sample': impl}, {}), {}, 'a'*64, default_composition_id=None)
 
 
 @pytest.mark.parametrize('path', [
@@ -190,7 +193,8 @@ def test_interval_sample_descriptor_roundtrip_without_execution():
     meta = metadata('sensing')
     meta['output_spec']['measurement']['time_semantics'] = 'interval_sample'
     report = build_descriptor(TrainingPackageDefinition({}, {}, {}, {},
-        {'sample': declared('sensing', meta)}), {'model_bindings': {'sensing': 'sample'}}, 'a'*64)
+        {'sample': declared('sensing', meta)}), {'default': {'model_bindings': {
+            'sensing': {'default': 'sample', 'options': {'sample': {}}}}}}, 'a'*64, default_composition_id='default')
     restored = parse_descriptor_json(report.model_dump_json())
     assert restored.sensing_models['sample'].output_spec.measurement.time_semantics == 'interval_sample'
 

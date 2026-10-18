@@ -34,7 +34,7 @@ class BlockImports(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockImports())
 runpy.run_module('muse_server.resolver', run_name='__main__')
 '''
-    resolved = run_python(['-c', blocker, '--descriptor', str(output / 'descriptor.json'),
+    resolved = run_python(['-c', blocker, '--composition-id', 'default', '--descriptor', str(output / 'descriptor.json'),
                           '--term-config', str(config), '--output', str(result_path)], tmp_path)
     assert resolved.returncode == 0, resolved.stderr
     assert result_path.exists(), 'Resolver CLI must write its result'
@@ -67,7 +67,7 @@ def test_resolver_bad_override_never_publishes_result(descriptor, tmp_path):
     config = tmp_path / 'override.json'
     config.write_text('{"roles":{"scout":{"reward":{"progress":{"enabled":false}}}}}')
     target = tmp_path / 'result.json'
-    result = run_python(['-m', 'muse_server.resolver', '--descriptor', str(data), '--term-config', str(config), '--output', str(target)], tmp_path)
+    result = run_python(['-m', 'muse_server.resolver', '--composition-id', 'default', '--descriptor', str(data), '--term-config', str(config), '--output', str(target)], tmp_path)
     assert result.returncode != 0
     assert not target.exists()
     errors = json.loads(result.stderr)['errors']
@@ -80,6 +80,6 @@ def test_duplicate_json_keys_rejected(descriptor, tmp_path):
     config = tmp_path / 'override.json'
     config.write_text('{"roles":{},"roles":{}}')
     target = tmp_path / 'result.json'
-    result = run_python(['-m', 'muse_server.resolver', '--descriptor', str(data), '--term-config', str(config), '--output', str(target)], tmp_path)
+    result = run_python(['-m', 'muse_server.resolver', '--composition-id', 'default', '--descriptor', str(data), '--term-config', str(config), '--output', str(target)], tmp_path)
     assert result.returncode != 0 and not target.exists()
     assert 'Duplicate' in result.stderr

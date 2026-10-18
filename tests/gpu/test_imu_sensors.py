@@ -30,7 +30,8 @@ def make_imu_plan(root, period=3, enabled=True, task=False):
     package = root / 'package'
     shutil.copytree(example / 'training_package', package)
     composition_path = package / 'training_package.yaml'
-    composition = yaml.safe_load(composition_path.read_text())
+    package_config = yaml.safe_load(composition_path.read_text())
+    composition = package_config['compositions']['default']
     if task:
         shutil.copyfile(ROOT / 'tests/fixtures/imu_task.py', package / 'imu_task.py')
         entry = package / '__init__.py'
@@ -44,10 +45,8 @@ def make_imu_plan(root, period=3, enabled=True, task=False):
     for role in composition['agent_roles'].values():
         role['observation_terms'].extend(dict(selection_id='imu_' + name, term='builtin:imu_' + name,
             default_enabled=enabled) for name in ('gyro', 'specific_force', 'valid', 'age'))
-    composition_path.write_text(yaml.safe_dump(composition, sort_keys=False))
+    composition_path.write_text(yaml.safe_dump(package_config, sort_keys=False))
     payload = json.loads((example / 'request.json').read_text())
-    if task:
-        payload['task_id'] = 'imu_task'
     for kind, source in [('environment', example / 'environment'), ('training_package', package)]:
         resource = catalog.register_archive(kind, archive(source, root / (kind + '.zip')))
         payload[kind + '_id'], payload[kind + '_revision'] = resource.resource_id, resource.revision

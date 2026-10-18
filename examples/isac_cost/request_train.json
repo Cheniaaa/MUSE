@@ -43,7 +43,7 @@
       ]
     }
   },
-  "task_id": "isac_task", "task_config": {}, "algorithm_id": "builtin:mappo",
+  "composition_id": "mappo_cost_on", "task_config": {},
   "role_config": {"alpha": {"group_id": "uav_group", "slots": [0]}, "beta": {"group_id": "uav_group", "slots": [1]}},
   "term_config": {},
   "model_config": {

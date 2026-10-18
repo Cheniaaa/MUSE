@@ -245,6 +245,21 @@ class CriticComposition(DataModel):
     observation_terms: list[TermSelection] = Field(default_factory=list)
 
 
+class ModelChoice(DataModel):
+    config: dict = Field(default_factory=dict)
+
+
+class ModelBindingOptions(DataModel):
+    default: str = Field(min_length=1)
+    options: dict[str, ModelChoice] = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def check_default(self):
+        if self.default not in self.options:
+            raise ValueError('Default model must be a declared option')
+        return self
+
+
 class Composition(DataModel):
     task: str | None = None
     algorithm: str | None = None
@@ -255,18 +270,28 @@ class Composition(DataModel):
     world_reward_terms: list[TermSelection] = Field(default_factory=list)
     world_cost_terms: list[TermSelection] = Field(default_factory=list)
     world_termination_terms: list[TermSelection] = Field(default_factory=list)
-    model_bindings: dict[str, str] = Field(default_factory=dict)
+    model_bindings: dict[Literal['radio', 'sensing'], ModelBindingOptions] = Field(default_factory=dict)
 
 
 class PackageDescriptor(DataModel):
-    sdk_version: Literal['0.1'] = '0.1'
+    sdk_version: Literal['0.2'] = '0.2'
     package_hash: str = Field(pattern=r'^[0-9a-f]{64}$')
     terms: dict[str, TermDescriptor]
     tasks: dict[str, TaskDescriptor]
     algorithms: dict[str, AlgorithmDescriptor]
     radio_models: dict[str, RadioDescriptor]
     sensing_models: dict[str, SensingDescriptor]
-    composition: Composition
+    compositions: dict[str, Composition]
+    default_composition_id: str | None
+
+    @model_validator(mode='after')
+    def check_default(self):
+        if self.compositions:
+            if '' in self.compositions or self.default_composition_id not in self.compositions:
+                raise ValueError('Named compositions require a declared default_composition_id')
+        elif self.default_composition_id is not None:
+            raise ValueError('An empty catalog has no default composition')
+        return self
 
 
 def parse_descriptor_json(content: str, builtin_catalog: PackageDescriptor | None = None) -> PackageDescriptor:
@@ -302,17 +327,22 @@ def _reference(name: str, entries: dict, field: str, builtin_entries: dict | Non
 
 def validate_composition(descriptor: PackageDescriptor, builtin_catalog: PackageDescriptor | None = None) -> None:
     """只读校验：注册可缺实验必填参数，完整依赖闭包归M1。"""
-    composition = descriptor.composition
+    for composition in descriptor.compositions.values():
+        _validate_composition(composition, descriptor, builtin_catalog)
+
+
+def _validate_composition(composition, descriptor, builtin_catalog):
     for kind, entries in (('task', descriptor.tasks), ('algorithm', descriptor.algorithms)):
         name = getattr(composition, kind)
         if name is not None:
             meta = _reference(name, entries, kind, getattr(builtin_catalog, kind + 's', None))
             resolve_config(meta.config_schema, getattr(composition, kind + '_config'), {}, require_complete=False)
-    for kind, name in composition.model_bindings.items():
-        if kind not in ('radio', 'sensing'):
-            raise ConfigError('model_bindings', f'Unknown model kind {kind}')
-        entries = descriptor.radio_models if kind == 'radio' else descriptor.sensing_models
-        _reference(name, entries, 'model_bindings.' + kind, getattr(builtin_catalog, kind + '_models', None))
+    for kind, binding in composition.model_bindings.items():
+        for name, choice in binding.options.items():
+            field = 'model_bindings.' + kind + '.options.' + name
+            meta = _reference(name, getattr(descriptor, kind + '_models'), field,
+                              getattr(builtin_catalog, kind + '_models', None))
+            resolve_config(meta.config_schema, choice.config, {}, require_complete=False)
     for owner, kind, selections in iter_selections(composition):
         seen = set()
         for selection in selections:
@@ -371,8 +401,9 @@ def _describe(entries: dict[str, type], kind: str) -> dict:
     return output
 
 
-def build_descriptor(definition: TrainingPackageDefinition, composition: dict, package_hash: str,
-                     builtin_catalog: PackageDescriptor | None = None) -> PackageDescriptor:
+def build_descriptor(definition: TrainingPackageDefinition, compositions: dict, package_hash: str,
+                     builtin_catalog: PackageDescriptor | None = None, *,
+                     default_composition_id: str | None) -> PackageDescriptor:
     terms = {}
     for name, registration in definition.terms.items():
         if not name or name.startswith('builtin:') or not callable(registration.implementation):
@@ -383,9 +414,10 @@ def build_descriptor(definition: TrainingPackageDefinition, composition: dict, p
             input_fields=list(registration.input_fields), output_spec=registration.output_spec,
             cost_id=registration.cost_id, time_out=registration.time_out,
         )
-    check_json(composition, 'composition')
+    check_json(compositions, 'compositions')
     descriptor = PackageDescriptor(
-        package_hash=package_hash, terms=terms, composition=deepcopy(composition),
+        package_hash=package_hash, terms=terms, compositions=deepcopy(compositions),
+        default_composition_id=default_composition_id,
         tasks=_describe(definition.tasks, 'task'), algorithms=_describe(definition.algorithms, 'algorithm'),
         radio_models=_describe(definition.radio_models, 'radio'), sensing_models=_describe(definition.sensing_models, 'sensing'),
     )

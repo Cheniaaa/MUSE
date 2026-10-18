@@ -66,7 +66,10 @@ def main(argv: list[str] | None = None) -> int:
                 builtins = parse_descriptor_json(metadata.descriptor.model_dump_json())
             with load_package(args.package) as loaded:
                 package_hash = loaded.package_hash
-                descriptor = build_descriptor(loaded.definition, loaded.composition, package_hash, builtins)
+                descriptor = build_descriptor(loaded.definition, loaded.compositions, package_hash, builtins,
+                                               default_composition_id=loaded.default_composition_id)
+                if not descriptor.compositions:
+                    raise ConfigError('compositions', 'A training package requires a named composition')
                 descriptor_json = descriptor.model_dump_json(indent=2)
             report = ValidationReport(valid=True, package_hash=package_hash, errors=[], warnings=[])
             _atomic_write(descriptor_path, descriptor_json)

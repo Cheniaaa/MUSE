@@ -21,7 +21,7 @@ def imu_case(pipeline, *, enabled=True, profile=True, shared=False):
     request = copy.deepcopy(source)
     snapshot = catalog.snapshot()
     record = next(r for r in snapshot.resources if r.resource_id == source['training_package_id'])
-    for role in record.metadata['composition']['agent_roles'].values():
+    for role in record.metadata['compositions']['default']['agent_roles'].values():
         role['observation_terms'].extend(
             {'selection_id': name, 'term': 'builtin:' + name, 'default_enabled': enabled}
             for name in TERMS)
@@ -58,8 +58,7 @@ def add_task(request, record, inputs):
     record.metadata['tasks']['imu_reader'] = {
         'task_id': 'imu_reader', 'config_schema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
         'input_fields': inputs, 'published_fields': {}, 'role_status_bindings': {}, 'learning_done_roles': []}
-    record.metadata['composition']['task'] = 'imu_reader'
-    request['task_id'] = 'imu_reader'
+    record.metadata['compositions']['default']['task'] = 'imu_reader'
 
 
 def test_profile_freezes_integer_grid_and_native_output_contract(pipeline):
@@ -170,8 +169,7 @@ def test_task_only_consumer_binds_concrete_group_and_sample_tick(pipeline):
 def test_unselected_task_does_not_activate_sensor(pipeline):
     request, snapshot, record = imu_case(pipeline, enabled=False)
     add_task(request, record, [sensor_input('scout_group')])
-    record.metadata['composition']['task'] = None
-    request['task_id'] = None
+    record.metadata['compositions']['default']['task'] = None
     exp = resolved(request, snapshot)
     assert not any(key.startswith('sensor:') for key in exp.activation)
 
@@ -201,7 +199,7 @@ def test_algorithm_abi_rejects_raw_sensor_requirements(pipeline, owner):
     from muse_sdk.descriptor import InputField
     request, snapshot, record = imu_case(pipeline, enabled=False)
     if owner == 'role':
-        record.metadata['composition']['agent_roles']['scout']['input_requirements'] = [sensor_input()]
+        record.metadata['compositions']['default']['agent_roles']['scout']['input_requirements'] = [sensor_input()]
     else:
         snapshot.builtins.descriptor.algorithms['constant_velocity'].observation_requirements = [
             InputField.model_validate(sensor_input('scout_group'))]
@@ -233,7 +231,7 @@ def test_learning_contract_distinguishes_active_sampling_semantics(pipeline, mut
 def test_contract_projects_active_groups_without_raw_rate_or_batch(pipeline):
     from muse_sdk.experiment import learning_contract
     request, snapshot, record = imu_case(pipeline, enabled=False)
-    record.metadata['composition']['agent_roles']['scout']['observation_terms'][-4]['default_enabled'] = True
+    record.metadata['compositions']['default']['agent_roles']['scout']['observation_terms'][-4]['default_enabled'] = True
     first = resolved(request, snapshot)
     request['topology']['world_count'] = 1
     request['scenario']['entity_groups'][0]['sensor_config']['update_rate_hz'] = 100. * (1 + 1e-10)

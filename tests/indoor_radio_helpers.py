@@ -23,9 +23,11 @@ def indoor_radio_catalog(root, *, service=False, model='indoor_office_radio', wo
     environment = catalog.register_archive('environment', archive(INDOOR / 'environment', root / 'environment.zip'))
     package = root / 'package'
     shutil.copytree(INDOOR / 'training_package', package)
-    composition = yaml.safe_load((package / 'training_package.yaml').read_text())
-    composition['model_bindings']['radio'] = 'builtin:' + model
-    (package / 'training_package.yaml').write_text(yaml.safe_dump(composition, sort_keys=False))
+    package_config = yaml.safe_load((package / 'training_package.yaml').read_text())
+    composition = package_config['compositions']['default']
+    reference = 'builtin:' + model
+    composition['model_bindings']['radio'] = {'default': reference, 'options': {reference: {}}}
+    (package / 'training_package.yaml').write_text(yaml.safe_dump(package_config, sort_keys=False))
     record = catalog.register_archive('training_package', archive(package, root / 'package.zip'))
     request = json.loads((INDOOR / ('request_service.json' if service else 'request_evaluate.json')).read_text())
     request.update(environment_id=environment.resource_id, environment_revision=environment.revision,

@@ -18,7 +18,7 @@ TERMS = ('rangefinder_distance', 'rangefinder_valid', 'rangefinder_age')
 
 def range_case(pipeline, *, enabled=True, profile=True, shared=False):
     request, snapshot, record = imu_case(pipeline, enabled=False, profile=False, shared=shared)
-    for role in record.metadata['composition']['agent_roles'].values():
+    for role in record.metadata['compositions']['default']['agent_roles'].values():
         role['observation_terms'].extend(
             {'selection_id': name, 'term': 'builtin:' + name, 'default_enabled': enabled}
             for name in TERMS)
@@ -38,7 +38,7 @@ def range_input(group, field='data'):
 
 def test_combined_profile_freezes_nominal_devices_and_independent_periods(pipeline):
     request, snapshot, record = range_case(pipeline)
-    for role in record.metadata['composition']['agent_roles'].values():
+    for role in record.metadata['compositions']['default']['agent_roles'].values():
         for selection in role['observation_terms']:
             if selection['selection_id'] in ('imu_gyro', 'imu_specific_force'):
                 selection['default_enabled'] = True
@@ -197,7 +197,7 @@ def test_task_only_range_consumer_activates_whole_profile(pipeline):
         'task_id': 'range_reader', 'config_schema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
         'input_fields': [range_input('scout_group'), range_input('scout_group', 'sample_tick')],
         'published_fields': {}, 'role_status_bindings': {}, 'learning_done_roles': []}
-    record.metadata['composition']['task'] = request['task_id'] = 'range_reader'
+    record.metadata['compositions']['default']['task'] = 'range_reader'
     exp = resolved(request, snapshot)
     assert [item.tensor.shape for item in exp.task_spec.input_fields] == [[2, 3, 1], [2, 3]]
     assert exp.activation['sensor:scout_group'] == ['task:range_reader']
@@ -222,7 +222,7 @@ def test_learning_contract_freezes_every_output_definition_and_period(pipeline, 
 
 def test_contract_keeps_only_active_devices_and_canonical_periods_not_batch_or_raw_rate(pipeline):
     request, snapshot, record = range_case(pipeline, enabled=False)
-    record.metadata['composition']['agent_roles']['scout']['observation_terms'][-3]['default_enabled'] = True
+    record.metadata['compositions']['default']['agent_roles']['scout']['observation_terms'][-3]['default_enabled'] = True
     first = resolved(request, snapshot)
     request['topology']['world_count'] = 1
     request['scenario']['entity_groups'][0]['sensor_config'] = {

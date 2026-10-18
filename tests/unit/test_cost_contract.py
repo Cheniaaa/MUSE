@@ -47,12 +47,11 @@ def _enable_costs(pipeline):
     snapshot = catalog.snapshot()
     snapshot.builtins.descriptor.algorithms['cost_test'] = snapshot.builtins.descriptor.algorithms['ippo'].model_copy(
         update={'algorithm_id': 'cost_test', 'cost_inputs': ['role', 'world']})
-    request['algorithm_id'] = 'builtin:cost_test'
     package = next(record for record in snapshot.resources
                    if record.resource_id == request['training_package_id']
                    and record.revision == request['training_package_revision'])
-    composition = package.metadata['composition']
-    composition['algorithm'] = request['algorithm_id']
+    composition = package.metadata['compositions']['default']
+    composition['algorithm'] = 'builtin:cost_test'
     composition['algorithm_config'] = {}
     builtin_terms = snapshot.builtins.descriptor.terms
     role_cost = builtin_terms['distance'].model_copy(update={
@@ -180,9 +179,8 @@ def test_ippo_world_cost_is_rejected_and_role_cost_is_accepted(pipeline):
 
     _, request, snapshot = _enable_costs(pipeline)
     request = _configured_request(request)
-    request['algorithm_id'] = 'builtin:ippo'
     package = next(record for record in snapshot.resources if record.resource_id == request['training_package_id'])
-    package.metadata['composition']['algorithm'] = request['algorithm_id']
+    package.metadata['compositions']['default']['algorithm'] = 'builtin:ippo'
     report = resolve_experiment(request, snapshot)
     assert not report.valid
     request['term_config'] = {'world': {'cost': {'team_energy': {'enabled': False}}}}

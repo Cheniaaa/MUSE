@@ -88,7 +88,7 @@ def test_channels_and_radio_role_keep_declared_order(pipeline):
     network['role_controls'] = {'guard': 'tx'}
     network['communication_allocations'][0]['resource_ids'] = ['a', 'b', 'c']
     package = next(x for x in snapshot.resources if x.kind == 'training_package')
-    package.metadata['composition']['agent_roles']['guard']['action_interfaces']['radio'] = 'power_channel'
+    package.metadata['compositions']['default']['agent_roles']['guard']['action_interfaces']['radio'] = 'power_channel'
     snapshot.builtins.descriptor.algorithms['constant_velocity'].action_requirements.append('power_channel')
     exp = resolve(request, snapshot)
     assert exp.action_specs['guard'].radio.channel_ids == [7, -3, 19]
@@ -142,7 +142,8 @@ def test_active_radio_frequency_domain_uses_canonical_resources(pipeline, freque
     if builtin:
         snapshot.builtins.descriptor.radio_models['oracle'] = RadioDescriptor.model_validate(
             package.metadata['radio_models']['oracle'])
-        package.metadata['composition']['model_bindings']['radio'] = 'builtin:oracle'
+        package.metadata['compositions']['default']['model_bindings']['radio'] = {
+            'default': 'builtin:oracle', 'options': {'builtin:oracle': {}}}
     resources = request['scenario']['network']['resources']
     resources.append(resource('other', -3, 2e9))
     # 第二个resource无需被allocation使用，科学域仍须覆盖全部canonical资源。
@@ -173,14 +174,16 @@ def test_inactive_radio_domain_does_not_restrict_other_experiments(pipeline):
     package.metadata['radio_models']['unrestricted'] = {
         **deepcopy(package.metadata['radio_models']['oracle']),
         'model_id': 'unrestricted', 'frequency_hz_schema': None}
-    package.metadata['composition']['model_bindings']['radio'] = 'unrestricted'
+    package.metadata['compositions']['default']['model_bindings']['radio'] = {
+        'default': 'unrestricted', 'options': {'unrestricted': {}}}
     request['scenario']['network']['services'] = [
         dict(service_id='payload', link_id='up', resource_ids=['band'], initial_bits=7.)]
     exp = resolve(request, snapshot)
     assert exp.model_bindings['radio'].reference == 'unrestricted'
     assert exp.model_bindings['radio'].descriptor.frequency_hz_schema is None
 
-    package.metadata['composition']['model_bindings']['radio'] = 'oracle'
+    package.metadata['compositions']['default']['model_bindings']['radio'] = {
+        'default': 'oracle', 'options': {'oracle': {}}}
     request['scenario']['network']['services'] = []
     request['scenario']['network']['background_emitters'] = []
     request['scenario']['network']['passive_endpoints'] = ['tx', 'rx']
@@ -219,7 +222,8 @@ def test_algorithm_only_model_requirements_activate_their_dependencies(pipeline,
     package = next(x for x in snapshot.resources if x.kind == 'training_package')
     if kind == 'sensing':
         package.metadata['sensing_models']['sensor'] = sensing_descriptor(radio_input=radio_input, shape=['B', 'L', 2])
-        package.metadata['composition']['model_bindings']['sensing'] = 'sensor'
+        package.metadata['compositions']['default']['model_bindings']['sensing'] = {
+            'default': 'sensor', 'options': {'sensor': {}}}
     baseline = resolve(request, snapshot)
     assert baseline.model_bindings == {}
     requirement = InputField(
@@ -234,7 +238,7 @@ def test_algorithm_only_model_requirements_activate_their_dependencies(pipeline,
     assert exp.algorithm_inputs.observations[0].tensor.shape == ([2, 2, 1] if kind == 'radio' else [2, 2, 2])
     assert exp.algorithm_inputs.actors == baseline.algorithm_inputs.actors
     assert exp.algorithm_inputs.critics == baseline.algorithm_inputs.critics
-    del package.metadata['composition']['model_bindings'][kind]
+    del package.metadata['compositions']['default']['model_bindings'][kind]
     rejected(request, snapshot, 'Required model binding')
 
 
@@ -251,13 +255,14 @@ def test_algorithm_requirement_does_not_grant_actor_direct_radio_access(pipeline
 def add_sensing_consumer(snapshot, *, radio_input=False, shape=None):
     package = next(x for x in snapshot.resources if x.kind == 'training_package')
     package.metadata['sensing_models']['sensor'] = sensing_descriptor(radio_input=radio_input, shape=shape)
-    package.metadata['composition']['model_bindings']['sensing'] = 'sensor'
+    package.metadata['compositions']['default']['model_bindings']['sensing'] = {
+        'default': 'sensor', 'options': {'sensor': {}}}
     package.metadata['terms']['measurement_score'] = dict(term_kind='reward', scope='world',
         config_schema=dict(type='object', properties={}, additionalProperties=False), input_fields=[dict(
             path=['sensing_outputs', 'measurement', 'data'], phase='post_physics',
             tensor=dict(shape=shape or ['B', 'S', 2], dtype='float32', units='m', frame='none', rate='radio_epoch'))],
         output_spec=dict(shape=['B'], dtype='float32', units='1', frame='none', rate='decision'))
-    package.metadata['composition']['world_reward_terms'] = [dict(selection_id='measurement', term='measurement_score')]
+    package.metadata['compositions']['default']['world_reward_terms'] = [dict(selection_id='measurement', term='measurement_score')]
 
 
 def test_sensing_only_and_radio_dependency_are_explicit(pipeline):
@@ -318,7 +323,7 @@ def test_service_fields_bind_the_specific_service_link_axis(pipeline):
             path=['network', 'services', 'payload', 'remaining_bits'], phase='post_physics',
             tensor=dict(shape=['B', 'N_service_links'], dtype='float64', units='bit', frame='none', rate='decision'))],
         output_spec=dict(shape=['B'], dtype='float32', units='1', frame='none', rate='decision'))
-    package.metadata['composition']['world_reward_terms'] = [dict(selection_id='remaining', term='service_score')]
+    package.metadata['compositions']['default']['world_reward_terms'] = [dict(selection_id='remaining', term='service_score')]
     exp = resolve(request, snapshot)
     selection = next(s for s in exp.selections if s.selection_id == 'remaining')
     assert selection.input_fields[0].tensor.shape == [2, 2]
@@ -428,7 +433,8 @@ def test_disjoint_service_resources_and_builtin_model_reference(pipeline):
     network['services'].append(dict(service_id='second_payload', link_id='up', resource_ids=['other'], initial_bits=11.))
     package = next(x for x in snapshot.resources if x.kind == 'training_package')
     snapshot.builtins.descriptor.radio_models['oracle'] = RadioDescriptor.model_validate(package.metadata['radio_models']['oracle'])
-    package.metadata['composition']['model_bindings']['radio'] = 'builtin:oracle'
+    package.metadata['compositions']['default']['model_bindings']['radio'] = {
+        'default': 'builtin:oracle', 'options': {'builtin:oracle': {}}}
     request['model_config'] = {'radio': {'scale': 3.}}
     exp = resolve(request, snapshot)
     assert [s.resource_indices for s in exp.network.services] == [(0,), (1,)]
@@ -479,7 +485,7 @@ def test_only_active_geometry_consumers_create_query_activation(pipeline):
             path=['network', 'geometry', 'sample_tick'], phase='post_physics',
             tensor=dict(shape=['B'], dtype='int64', units='tick', frame='none', rate='radio_epoch'))],
         output_spec=dict(shape=['B'], dtype='float32', units='1', frame='none', rate='decision'))
-    package.metadata['composition']['world_reward_terms'] = [dict(selection_id='tick', term='geometry_score')]
+    package.metadata['compositions']['default']['world_reward_terms'] = [dict(selection_id='tick', term='geometry_score')]
     exp = resolve(request, snapshot)
     assert exp.activation['geometry'] == ['world.reward.tick']
     assert exp.model_bindings == {}

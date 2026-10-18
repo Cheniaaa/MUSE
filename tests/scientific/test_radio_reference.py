@@ -35,7 +35,7 @@ def instance_for(law, layout, bound_slots, config=None, rng=None):
     from muse_builtins.models import registrations
     implementation = registrations()[law]
     descriptor = build_descriptor(TrainingPackageDefinition({}, {}, {}, {law: implementation}, {}),
-        {}, 'a' * 64).radio_models[law]
+        {}, 'a' * 64, default_composition_id=None).radio_models[law]
     geometry = ResolvedGeometry(layout=layout['geometry'], endpoint_epsilon_m=1e-4, blockers=())
     available = tuple(field for phase in ('reset', 'post_physics')
         for field in network_model_input_fields(layout['network'], geometry=geometry,

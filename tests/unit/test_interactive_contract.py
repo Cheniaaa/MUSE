@@ -95,7 +95,7 @@ def test_package_algorithm_missing_reset_hook_rejected_before_run(hook):
             UserAlgorithm.reset_worlds = None
         definition = replace(package.definition, algorithms={'cpu_rule': UserAlgorithm})
         with pytest.raises(ConfigError, match='reset_worlds'):
-            build_descriptor(definition, package.composition, package.package_hash)
+            build_descriptor(definition, package.compositions, package.package_hash, default_composition_id=package.default_composition_id)
 
 
 @pytest.mark.parametrize('inherit', [False, True])
@@ -114,7 +114,7 @@ def test_package_algorithm_reset_hook_supports_explicit_and_sdk_default(inherit)
                 self.mask = mask
             UserAlgorithm.reset_worlds = reset_worlds
         definition = replace(package.definition, algorithms={'cpu_rule': UserAlgorithm})
-        descriptor = build_descriptor(definition, package.composition, package.package_hash)
+        descriptor = build_descriptor(definition, package.compositions, package.package_hash, default_composition_id=package.default_composition_id)
         assert 'cpu_rule' in descriptor.algorithms
         instance = UserAlgorithm()
         instance.reset_worlds([True, False])

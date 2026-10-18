@@ -29,7 +29,7 @@
 4. 创建 `{"experiment_id":"实际ID","mode":"EVALUATE","max_decision_steps":200}`。规则算法不需checkpoint，不支持TRAIN。
 5. Worker日志每decision输出 `INDOOR_RADIO_RESULT`：三块结果/valid、采样tick/interval、pre-reset service与world reset。真实几何逐epoch误差和曲线见GPU验收，不用每decision末快照冒充全区间积分。
 
-free-space对照：将包YAML的radio binding改为 `builtin:free_space_radio`，重新登记包，并在request `model_config.radio` 增加 `minimum_distance_m:1` 后重新resolve；不能在运行中替换冻结模型。背景源关闭/换频及墙体对照同样通过实验配置/环境新revision完成。
+free-space对照：在包YAML的`compositions.default.model_bindings.radio.options`声明`builtin:free_space_radio: {config: {}}`，重新登记包，在request设置`model_choices.radio`为`builtin:free_space_radio`，并在`model_config.radio`增加`minimum_distance_m:1`后重新resolve；不能在运行中替换冻结模型。背景源关闭/换频及墙体对照同样通过实验配置/环境新revision完成。
 
 ## 验证入口
 

@@ -66,10 +66,10 @@ def definition(fixture_root):
 
 @pytest.fixture
 def composition(fixture_root):
-    return yaml.safe_load((fixture_root / 'training_package.yaml').read_text())
+    return yaml.safe_load((fixture_root / 'training_package.yaml').read_text())['compositions']['default']
 
 
 @pytest.fixture
 def descriptor(definition, composition):
     from muse_sdk.descriptor import build_descriptor
-    return build_descriptor(definition, composition, 'a' * 64)
+    return build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')

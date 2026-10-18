@@ -150,7 +150,7 @@ def test_incompatible_mixed_contract_rejected(pipeline, tmp_path, mutation, fiel
     catalog, request = mixed_pipeline(pipeline, tmp_path)
     snapshot = catalog.snapshot()
     record = next(r for r in snapshot.resources if r.resource_id == request['training_package_id'])
-    rover = record.metadata['composition']['agent_roles']['rover']
+    rover = record.metadata['compositions']['default']['agent_roles']['rover']
     if mutation == 'interface':
         rover['action_interfaces']['motion'] = 'body_velocity'
     elif mutation == 'binding':

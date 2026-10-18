@@ -55,7 +55,7 @@ def team_case(pipeline):
     snapshot = catalog.snapshot()
     request = copy.deepcopy(source)
     package = next(r for r in snapshot.resources if r.resource_id == source['training_package_id'] and r.revision == 1)
-    composition = package.metadata['composition']
+    composition = package.metadata['compositions']['default']
     composition.update(algorithm='builtin:mappo', algorithm_config={}, critic_inputs={
         'team': {'observation_terms': [
             {'selection_id': 'scout_target', 'term': 'builtin:relative_target', 'role_id': 'scout'},
@@ -67,7 +67,7 @@ def team_case(pipeline):
         config_schema={'type': 'object', 'properties': {}, 'additionalProperties': False},
         input_fields=[], output_spec=tensor(['B']))
     composition['world_reward_terms'] = [{'selection_id': 'team', 'term': 'team_reward'}]
-    request.update(algorithm_id='builtin:mappo', algorithm_config={'collection_steps': 4})
+    request.update(algorithm_config={'collection_steps': 4})
     return request, snapshot, package
 
 
@@ -90,8 +90,8 @@ def add_task(case):
         ], published_fields={'stage': tensor(['B'], dtype='int64'), 'features': tensor(['B', 2, 3])},
         role_status_bindings={}, learning_done_roles=['guard'])
     package.metadata['tasks']['mission'] = task
-    package.metadata['composition'].update(task='mission', task_config={'threshold': 5})
-    request.update(task_id='mission', task_config={'threshold': 7})
+    package.metadata['compositions']['default'].update(task='mission', task_config={'threshold': 5})
+    request.update(task_config={'threshold': 7})
     return task
 
 
@@ -113,7 +113,7 @@ def test_all_centralized_requires_enabled_observations(team_case, disabled):
         request['term_config'] = {'critic_inputs': {'team': {'observation': {
             name: {'enabled': False} for name in ('scout_target', 'guard_target')}}}}
     else:
-        package.metadata['composition']['critic_inputs'] = {}
+        package.metadata['compositions']['default']['critic_inputs'] = {}
     report = resolve_experiment(request, snapshot)
     assert not report.valid and any('critic' in e['field'] for e in report.errors)
 
@@ -148,7 +148,7 @@ def explicit_critic_inputs(case, group='team', observation_group='team'):
     ('team', 'scout'), ('team', 'guard'),
 ])
 def test_explicit_critic_roles_follow_selections_not_group_names(team_case, group, observation_group):
-    composition = team_case[2].metadata['composition']
+    composition = team_case[2].metadata['compositions']['default']
     composition['critic_inputs'][observation_group] = composition['critic_inputs'].pop('team')
     explicit_critic_inputs(team_case, group, observation_group)
     exp = resolve(team_case)
@@ -181,7 +181,7 @@ def test_explicit_critic_world_observation_has_no_role_slots(team_case, group):
     package.metadata['terms']['world_observation'] = dict(term_kind='observation', scope='world',
         config_schema={'type': 'object', 'properties': {}, 'additionalProperties': False},
         input_fields=[], output_spec=tensor(['B', 2, 3]))
-    package.metadata['composition']['critic_inputs']['team']['observation_terms'].append(
+    package.metadata['compositions']['default']['critic_inputs']['team']['observation_terms'].append(
         {'selection_id': 'world', 'term': 'world_observation'})
     item = InputField.model_validate(field(['observations', 'critic_inputs', 'team', 'world'],
         ['B', 2, 3], phase='post_observation'))
@@ -207,7 +207,7 @@ def test_explicit_critic_preserves_declared_tensor_checks(team_case, attribute, 
 
 @pytest.mark.parametrize('group', ['team', 'scout', 'guard'])
 def test_explicit_critic_role_placeholder_requires_real_role_context(team_case, group):
-    composition = team_case[2].metadata['composition']
+    composition = team_case[2].metadata['compositions']['default']
     composition['critic_inputs'][group] = composition['critic_inputs'].pop('team')
     items = explicit_critic_inputs(team_case, group, group)
     # group 与 role 同名，也不能作为 RoleBinding 的上下文。
@@ -222,7 +222,7 @@ def test_explicit_critic_role_placeholder_requires_real_role_context(team_case, 
 @pytest.mark.parametrize('kind', ['absent', 'disabled', 'role'])
 def test_world_only_learner_requires_enabled_world_reward(team_case, kind):
     request, snapshot, package = team_case
-    composition = package.metadata['composition']
+    composition = package.metadata['compositions']['default']
     if kind == 'disabled':
         request['term_config'] = {'world': {'reward': {'team': {'enabled': False}}}}
     elif kind == 'absent':
@@ -239,8 +239,7 @@ def test_world_requirement_uses_contract_not_algorithm_name(team_case):
     custom = snapshot.builtins.descriptor.algorithms['mappo'].model_dump(mode='json')
     custom['algorithm_id'] = 'custom_team'
     package.metadata['algorithms']['custom_team'] = custom
-    package.metadata['composition'].update(algorithm='custom_team', world_reward_terms=[])
-    request['algorithm_id'] = 'custom_team'
+    package.metadata['compositions']['default'].update(algorithm='custom_team', world_reward_terms=[])
     assert not resolve_experiment(request, snapshot).valid
     custom['training_schedule'] = None
     assert resolve_experiment(request, snapshot).valid
@@ -269,7 +268,7 @@ def test_task_fields_are_available_to_observation_probe_and_reward(team_case):
         config_schema={'type': 'object', 'properties': {}, 'additionalProperties': False},
         input_fields=[field(['task', 'stage'], ['B'], phase='post_task', dtype='int64')],
         output_spec=tensor(['B', 1]))
-    package.metadata['composition']['critic_inputs']['team']['observation_terms'].append(
+    package.metadata['compositions']['default']['critic_inputs']['team']['observation_terms'].append(
         {'selection_id': 'stage', 'term': 'stage_observation'})
     package.metadata['terms']['team_reward']['input_fields'] = [
         field(['task', 'features'], ['B', 2, 3], phase='post_task')]
@@ -316,13 +315,13 @@ def test_task_identity_and_config_errors(team_case, kind):
     if kind in ('mismatch', 'invalid_config'):
         add_task(team_case)
         if kind == 'mismatch':
-            request['task_id'] = None
+            package.metadata['compositions']['default']['task'] = 'missing'
         else:
             request['task_config']['threshold'] = 0
     elif kind == 'request_config':
         request['task_config'] = {'unused': 1}
     else:
-        package.metadata['composition']['task_config'] = {'unused': 1}
+        package.metadata['compositions']['default']['task_config'] = {'unused': 1}
     report = resolve_experiment(request, snapshot)
     assert not report.valid, kind
 
@@ -354,7 +353,7 @@ def test_task_config_merges_schema_composition_and_request(team_case):
     request, _, package = team_case
     request['task_config'] = {}
     assert resolve(team_case).task_config == {'threshold': 5}
-    package.metadata['composition']['task_config'] = {}
+    package.metadata['compositions']['default']['task_config'] = {}
     assert resolve(team_case).task_config == {'threshold': 3}
 
 

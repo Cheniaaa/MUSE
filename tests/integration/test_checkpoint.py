@@ -144,7 +144,7 @@ def test_checkpoint_compatibility_and_mode_boundaries(published):
     request = json.loads((EXAMPLE / 'request_train.json').read_text())
     request.update(environment_id=exp['environment']['resource_id'], environment_revision=exp['environment']['revision'],
                    training_package_id=exp['training_package']['resource_id'],
-                   training_package_revision=exp['training_package']['revision'], algorithm_id='custom_ippo')
+                   training_package_revision=exp['training_package']['revision'])
     request['algorithm_config'].update(collection_steps=4, num_learning_epochs=1, num_mini_batches=1)
     request['term_config'] = {'world': {'termination': {'episode_limit': {'config': {'episode_max_steps': 4}}}}}
     request['topology']['world_count'] = 1

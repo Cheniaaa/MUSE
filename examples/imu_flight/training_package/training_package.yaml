@@ -1,44 +1,47 @@
-algorithm: builtin:ippo
-algorithm_config:
-  collection_steps: 24
-  hidden_dims: [64, 64]
-  gamma: 0.99
-  lam: 0.95
-  learning_rate: 0.0003
-  num_learning_epochs: 4
-  num_mini_batches: 4
-agent_roles:
-  scout:
-    entity_kind: aerial_vehicle
-    action_interfaces: {motion: body_velocity}
-    observation_terms:
-      - {selection_id: target, term: 'builtin:relative_target', required: true}
-      - {selection_id: velocity, term: 'builtin:velocity_world', required: true}
-      - {selection_id: orientation, term: 'builtin:orientation_wxyz', required: true}
-      - {selection_id: imu_gyro, term: 'builtin:imu_gyro', required: true}
-      - {selection_id: imu_specific_force, term: 'builtin:imu_specific_force', required: true}
-      - {selection_id: imu_valid, term: 'builtin:imu_valid', required: true}
-      - {selection_id: imu_age, term: 'builtin:imu_age', required: true}
-      - {selection_id: previous_action, term: 'builtin:previous_action', required: true}
-    reward_terms:
-      - {selection_id: progress, term: 'builtin:progress', required: true, weight: 1.0, config: {scale: 2.0}}
-      - {selection_id: distance, term: 'builtin:distance', required: true, weight: 0.1, config: {scale: 1.0}}
-  guard:
-    entity_kind: aerial_vehicle
-    action_interfaces: {motion: body_velocity}
-    observation_terms:
-      - {selection_id: target, term: 'builtin:relative_target', required: true}
-      - {selection_id: velocity, term: 'builtin:velocity_world', required: true}
-      - {selection_id: orientation, term: 'builtin:orientation_wxyz', required: true}
-      - {selection_id: imu_gyro, term: 'builtin:imu_gyro', required: true}
-      - {selection_id: imu_specific_force, term: 'builtin:imu_specific_force', required: true}
-      - {selection_id: imu_valid, term: 'builtin:imu_valid', required: true}
-      - {selection_id: imu_age, term: 'builtin:imu_age', required: true}
-      - {selection_id: previous_action, term: 'builtin:previous_action', required: true}
-    reward_terms:
-      - {selection_id: progress, term: 'builtin:progress', required: true, weight: 0.5, config: {scale: 1.0}}
-      - {selection_id: distance, term: 'builtin:distance', required: true, weight: 0.1, config: {scale: 1.0}}
-world_termination_terms:
-  - {selection_id: scout_collision, term: 'builtin:collision', required: true, config: {controlled_role: scout}}
-  - {selection_id: guard_collision, term: 'builtin:collision', required: true, config: {controlled_role: guard}}
-  - {selection_id: episode_limit, term: 'builtin:timeout', required: true, config: {episode_max_steps: 500}}
+default_composition_id: default
+compositions:
+  default:
+    algorithm: builtin:ippo
+    algorithm_config:
+      collection_steps: 24
+      hidden_dims: [64, 64]
+      gamma: 0.99
+      lam: 0.95
+      learning_rate: 0.0003
+      num_learning_epochs: 4
+      num_mini_batches: 4
+    agent_roles:
+      scout:
+        entity_kind: aerial_vehicle
+        action_interfaces: {motion: body_velocity}
+        observation_terms:
+          - {selection_id: target, term: 'builtin:relative_target', required: true}
+          - {selection_id: velocity, term: 'builtin:velocity_world', required: true}
+          - {selection_id: orientation, term: 'builtin:orientation_wxyz', required: true}
+          - {selection_id: imu_gyro, term: 'builtin:imu_gyro', required: true}
+          - {selection_id: imu_specific_force, term: 'builtin:imu_specific_force', required: true}
+          - {selection_id: imu_valid, term: 'builtin:imu_valid', required: true}
+          - {selection_id: imu_age, term: 'builtin:imu_age', required: true}
+          - {selection_id: previous_action, term: 'builtin:previous_action', required: true}
+        reward_terms:
+          - {selection_id: progress, term: 'builtin:progress', required: true, weight: 1.0, config: {scale: 2.0}}
+          - {selection_id: distance, term: 'builtin:distance', required: true, weight: 0.1, config: {scale: 1.0}}
+      guard:
+        entity_kind: aerial_vehicle
+        action_interfaces: {motion: body_velocity}
+        observation_terms:
+          - {selection_id: target, term: 'builtin:relative_target', required: true}
+          - {selection_id: velocity, term: 'builtin:velocity_world', required: true}
+          - {selection_id: orientation, term: 'builtin:orientation_wxyz', required: true}
+          - {selection_id: imu_gyro, term: 'builtin:imu_gyro', required: true}
+          - {selection_id: imu_specific_force, term: 'builtin:imu_specific_force', required: true}
+          - {selection_id: imu_valid, term: 'builtin:imu_valid', required: true}
+          - {selection_id: imu_age, term: 'builtin:imu_age', required: true}
+          - {selection_id: previous_action, term: 'builtin:previous_action', required: true}
+        reward_terms:
+          - {selection_id: progress, term: 'builtin:progress', required: true, weight: 0.5, config: {scale: 1.0}}
+          - {selection_id: distance, term: 'builtin:distance', required: true, weight: 0.1, config: {scale: 1.0}}
+    world_termination_terms:
+      - {selection_id: scout_collision, term: 'builtin:collision', required: true, config: {controlled_role: scout}}
+      - {selection_id: guard_collision, term: 'builtin:collision', required: true, config: {controlled_role: guard}}
+      - {selection_id: episode_limit, term: 'builtin:timeout', required: true, config: {episode_max_steps: 500}}

@@ -79,7 +79,7 @@ def test_isac_real_catalog_shapes_services_and_scopes(tmp_path, algorithm, costs
     assert ExperimentDefinition.model_validate_json(exp.model_dump_json()) == exp
     assert learning_contract(exp)['costs'] == exp.costs.model_dump(mode='json')
     assert not next(selection for selection in exp.selections if selection.term_kind == 'termination').time_out
-    request['algorithm_id'] = 'builtin:ippo' if algorithm == 'mappo' else 'builtin:mappo'
+    request['composition_id'] = 'missing'
     rejected = resolve_experiment(request, catalog.snapshot())
     assert not rejected.valid
 
@@ -121,9 +121,10 @@ from muse_server.resolver import resolve_experiment
 root=Path(sys.argv[1])
 scenario=sys.argv[2]
 module=importlib.import_module('examples.'+scenario+'.training_package')
-composition=yaml.safe_load((Path('examples')/scenario/'training_package/training_package.yaml').read_text())
+package_config=yaml.safe_load((Path('examples')/scenario/'training_package/training_package.yaml').read_text())
 catalog=Catalog(root/'catalog',root/'builtin.json')
-build_descriptor(module.build_training_package(),composition,'a'*64,catalog.snapshot().builtins.descriptor)
+build_descriptor(module.build_training_package(),package_config['compositions'],'a'*64,
+    catalog.snapshot().builtins.descriptor,default_composition_id=package_config['default_composition_id'])
 report=resolve_experiment(json.loads((root/'request.json').read_text()),catalog.snapshot())
 assert report.valid,report.errors
 assert not {'torch','warp'} & sys.modules.keys()

@@ -63,7 +63,7 @@ def test_example_does_not_limit_topology_or_direction(tmp_path, direction):
         config=dict(active=[True]*count, power_w=[.001]*count, channel_id=[7]*count)))
     package = tmp_path / 'package'
     composition = yaml.safe_load((package / 'training_package.yaml').read_text())
-    del composition['agent_roles']['pilot']['action_interfaces']['radio']
+    del composition['compositions']['default']['agent_roles']['pilot']['action_interfaces']['radio']
     (package / 'training_package.yaml').write_text(yaml.safe_dump(composition))
     record = catalog.register_archive('training_package', archive(package, tmp_path / 'reverse.zip'))
     request.update(training_package_id=record.resource_id, training_package_revision=record.revision)

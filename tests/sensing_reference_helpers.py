@@ -142,7 +142,7 @@ def sensing_instance(model_id, layout, *, config, device='cpu', rng=None):
     from muse_runtime.rng import WorldRng
 
     implementation = sensing_registrations()[model_id]
-    descriptor = build_descriptor(TrainingPackageDefinition({}, {}, {}, {}, {model_id: implementation}), {}, 'a' * 64).sensing_models[model_id]
+    descriptor = build_descriptor(TrainingPackageDefinition({}, {}, {}, {}, {model_id: implementation}), {}, 'a' * 64, default_composition_id=None).sensing_models[model_id]
     geometry = ResolvedGeometry(layout=layout['geometry'], endpoint_epsilon_m=1e-4, blockers=())
     fields = tuple(field for phase in ('reset', 'post_physics') for field in network_model_input_fields(
         layout['network'], geometry=geometry, batch_size=layout['axes']['B'], phase=phase))

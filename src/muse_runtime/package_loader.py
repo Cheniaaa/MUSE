@@ -104,7 +104,8 @@ class _PackageFinder(importlib.abc.MetaPathFinder):
 @dataclass
 class LoadedPackage:
     definition: TrainingPackageDefinition
-    composition: dict
+    compositions: dict
+    default_composition_id: str
     package_hash: str
     root: Path
     _namespace: str = field(repr=False)
@@ -136,11 +137,13 @@ def load_package(package_dir: Path) -> LoadedPackage:
             raise ConfigError(name, 'Required package file is missing')
     try:
         with (root / 'training_package.yaml').open(encoding='utf-8') as stream:
-            composition = yaml.load(stream, Loader=_UniqueSafeLoader)
+            declaration = yaml.load(stream, Loader=_UniqueSafeLoader)
     except (yaml.YAMLError, UnicodeError) as exc:
         raise ConfigError('training_package.yaml', str(exc)) from exc
-    if not isinstance(composition, dict):
+    if not isinstance(declaration, dict):
         raise ConfigError('training_package.yaml', 'Expected a mapping')
+    if set(declaration) != {'compositions', 'default_composition_id'}:
+        raise ConfigError('training_package.yaml', 'Expected compositions and default_composition_id')
 
     namespace = '_muse_package_' + uuid4().hex
     finder = _PackageFinder(namespace)
@@ -161,7 +164,8 @@ def load_package(package_dir: Path) -> LoadedPackage:
         definition = builder()
         if not isinstance(definition, TrainingPackageDefinition):
             raise ConfigError('build_training_package', 'Expected TrainingPackageDefinition')
-        return LoadedPackage(definition, composition, package_hash, root, namespace, finder)
+        return LoadedPackage(definition, declaration['compositions'], declaration['default_composition_id'],
+                             package_hash, root, namespace, finder)
     except BaseException:
         _cleanup(namespace)
         sys.meta_path.remove(finder)

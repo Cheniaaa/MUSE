@@ -220,10 +220,12 @@ def test_registered_model_candidate_does_not_activate_wireless(model_package, pi
     assert control.resolved_experiment.model_bindings == {}
     assert 'cpu_rate' in no_binding.metadata['radio_models']
 
-    composition['model_bindings'] = {'radio': 'cpu_rate'}
+    binding = {'default': 'cpu_rate', 'options': {'cpu_rate': {}}}
+    composition['compositions']['default']['model_bindings'] = {'radio': binding}
     composition_path.write_text(yaml.safe_dump(composition), encoding='utf-8')
     bound = catalog.register_archive('training_package', archive(model_package, tmp_path / 'bound-flight.zip'))
-    assert bound.metadata['composition']['model_bindings'] == {'radio': 'cpu_rate'}
+    assert bound.metadata['compositions']['default']['model_bindings'] == {'radio': {
+        'default': 'cpu_rate', 'options': {'cpu_rate': {'config': {}}}}}
     request.update(training_package_id=bound.resource_id, training_package_revision=bound.revision)
     resolved = resolve_experiment(request, catalog.snapshot())
     assert resolved.valid, resolved.errors

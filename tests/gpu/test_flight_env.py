@@ -31,7 +31,8 @@ def build_plan(root, progress=False, shared_group=False, worlds=2, history=0):
                 if path.is_file() and '__pycache__' not in path.parts:
                     if progress and path.name == 'training_package.yaml':
                         import yaml
-                        composition = yaml.safe_load(path.read_text())
+                        package_config = yaml.safe_load(path.read_text())
+                        composition = package_config['compositions']['default']
                         for role in composition['agent_roles'].values():
                             role['reward_terms'][0]['term'] = 'builtin:progress'
                         extra = copy.deepcopy(composition['agent_roles']['scout']['reward_terms'][0])
@@ -42,7 +43,7 @@ def build_plan(root, progress=False, shared_group=False, worlds=2, history=0):
                                 {'selection_id': name, 'term': 'builtin:' + name})
                         composition['critic_inputs'] = {'terminal': {'observation_terms': [
                             {'selection_id': 'guard_target', 'term': 'builtin:relative_target', 'role_id': 'guard'}]}}
-                        stream.writestr('training_package.yaml', yaml.safe_dump(composition, sort_keys=False))
+                        stream.writestr('training_package.yaml', yaml.safe_dump(package_config, sort_keys=False))
                     else:
                         stream.write(path, path.relative_to(EXAMPLE / directory))
         resources[kind] = catalog.register_archive(kind, archive)

@@ -133,7 +133,7 @@ def test_learning_contract_keeps_radio_order_and_ignores_batch():
         return contracts.ExperimentDefinition.model_construct(
             platform_revision='test', training_package=contracts.ResourceRef(
                 resource_id='pkg', revision=1, sha256='a'*64),
-            algorithm_id='test', algorithm_config={}, training_schedule=None,
+            composition_id='default', algorithm_id='test', algorithm_config={}, training_schedule=None,
             task_id=None, task_config={}, costs=contracts.CostLayout(roles={}, world={}),
             model_bindings={}, activation={}, bindings={}, sensors={},
             action_specs={'role': spec}, action_layout=[], role_inputs={}, selections=[],

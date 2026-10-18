@@ -33,7 +33,7 @@ def export_metadata(controller_path: Path) -> BuiltinMetadata:
     asset = Path(__file__).parent / 'assets/bitcraze_crazyflie_2'
     asset_hash = hash_package(asset)
     definition = TrainingPackageDefinition(registrations(), {}, algorithm_registrations(), radio_registrations(), sensing_registrations())
-    descriptor = build_descriptor(definition, {}, asset_hash)
+    descriptor = build_descriptor(definition, {}, asset_hash, default_composition_id=None)
     controllers = {controller['id']: controller, 'none': {'id': 'none'}}
     controllers['diff_drive_controller'] = {
         'id': 'diff_drive_controller',

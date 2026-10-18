@@ -20,7 +20,7 @@ def _shape(spec, axes, field):
     return spec.model_copy(update={'shape': shape}, deep=True)
 
 
-def resolve_network(request, *, descriptor, builtins, bindings, endpoints, geometry, required_inputs):
+def resolve_network(request, *, descriptor, composition, builtins, bindings, endpoints, geometry, required_inputs):
     """required_inputs为(InputField, consumer identity)；仅显式消费激活模型。"""
     selection = request.scenario.network
     reasons = {}
@@ -46,20 +46,25 @@ def resolve_network(request, *, descriptor, builtins, bindings, endpoints, geome
     for role, binding in bindings.items():
         if binding.action_interfaces.get('radio') == 'power_channel':
             reasons.setdefault('network', []).append('role:' + role)
-    if set(request.model_parameters) - set(descriptor.composition.model_bindings):
+    if set(request.model_parameters) - set(composition.model_bindings):
         raise ConfigError('model_config', 'Model config requires a declared radio/sensing binding')
+    for kind, choice in request.model_choices.items():
+        if kind not in composition.model_bindings or choice not in composition.model_bindings[kind].options:
+            raise ConfigError('model_choices.' + kind, 'Model choice must be declared by the selected composition')
 
     def model_descriptor(kind):
-        reference = descriptor.composition.model_bindings.get(kind)
-        if reference is None:
+        binding = composition.model_bindings.get(kind)
+        if binding is None:
             raise ConfigError('model_bindings.' + kind, 'Required model binding is missing')
+        reference = request.model_choices.get(kind, binding.default)
         return reference, _reference(reference, getattr(descriptor, kind + '_models'),
             'model_bindings.' + kind, getattr(builtins.descriptor, kind + '_models'))
 
     if not reasons:
         for kind, override in request.model_parameters.items():
-            _, meta = model_descriptor(kind)
-            resolve_config(meta.config_schema, {}, override, require_complete=False)
+            reference, meta = model_descriptor(kind)
+            resolve_config(meta.config_schema, composition.model_bindings[kind].options[reference].config,
+                           override, require_complete=False)
         return None, {}, {}
     if selection is None or endpoints is None or not endpoints[0]:
         raise ConfigError('scenario.network', 'Wireless consumers require network and explicit device endpoints')
@@ -230,8 +235,9 @@ def resolve_network(request, *, descriptor, builtins, bindings, endpoints, geome
             reasons.setdefault('radio', []).append('model:sensing')
     for kind, override in request.model_parameters.items():
         if kind not in reasons:
-            _, meta = model_descriptor(kind)
-            resolve_config(meta.config_schema, {}, override, require_complete=False)
+            reference, meta = model_descriptor(kind)
+            resolve_config(meta.config_schema, composition.model_bindings[kind].options[reference].config,
+                           override, require_complete=False)
     for kind in ('radio', 'sensing'):
         if kind not in reasons:
             continue
@@ -276,6 +282,7 @@ def resolve_network(request, *, descriptor, builtins, bindings, endpoints, geome
                 tensor = getattr(meta.output_spec, name)
                 if tensor is not None:
                     _shape(tensor, axes, 'model_bindings.sensing.' + name)
-        config = resolve_config(meta.config_schema, {}, request.model_parameters.get(kind, {}), require_complete=True)
+        config = resolve_config(meta.config_schema, composition.model_bindings[kind].options[reference].config,
+                                request.model_parameters.get(kind, {}), require_complete=True)
         models[kind] = BoundModel(reference=reference, config=config, descriptor=meta.model_copy(deep=True), input_fields=inputs)
     return spec, models, {key: list(dict.fromkeys(value)) for key, value in reasons.items()}

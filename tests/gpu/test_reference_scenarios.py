@@ -155,11 +155,15 @@ def test_finite_task_and_admin_timeout_keep_terminal_history(tmp_path, gpu_strea
             'alpha': {'minimum_m': [-2., -2., .5], 'maximum_m': [2.5, 3., .99]},
             'beta': {'minimum_m': [5.5, -2., .5], 'maximum_m': [10., 3., 1.5]}}
     if boundary in ('timeout', 'both'):
+        import shutil
+        from reference_scenario_helpers import ISAC
         package = tmp_path / 'catalog/package'
-        composition = yaml.safe_load((package / 'training_package.yaml').read_text())
+        shutil.copytree(ISAC / 'training_package', package)
+        package_config = yaml.safe_load((package / 'training_package.yaml').read_text())
+        composition = package_config['compositions'][request['composition_id']]
         composition['world_termination_terms'].append(dict(selection_id='admin_timeout', term='builtin:timeout',
             config={'episode_max_steps': 2 if boundary == 'timeout' else 1}))
-        (package / 'training_package.yaml').write_text(yaml.safe_dump(composition, sort_keys=False))
+        (package / 'training_package.yaml').write_text(yaml.safe_dump(package_config, sort_keys=False))
         registered = catalog.register_archive('training_package', archive(package, tmp_path / 'timeout.zip'))
         request.update(training_package_id=registered.resource_id, training_package_revision=registered.revision)
     with reference_env(catalog, request) as env:

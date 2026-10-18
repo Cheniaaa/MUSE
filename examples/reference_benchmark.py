@@ -12,17 +12,15 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import zipfile
 
-import yaml
-
 from muse_sdk.run_protocol import RunTimeouts
 
 
 CONFIGURATIONS = (
-    ('isac-mappo-cost-on', 'isac_cost', 'builtin:mappo', True, 0),
-    ('isac-mappo-cost-off', 'isac_cost', 'builtin:mappo', False, 0),
-    ('isac-ippo-cost-off', 'isac_cost', 'builtin:ippo', False, 0),
-    ('history-ippo-l1', 'hybrid_history_markov', 'builtin:ippo', False, 1),
-    ('history-ippo-l4', 'hybrid_history_markov', 'builtin:ippo', False, 4),
+    ('isac-mappo-cost-on', 'isac_cost', 'mappo_cost_on', True, 0),
+    ('isac-mappo-cost-off', 'isac_cost', 'mappo_cost_off', False, 0),
+    ('isac-ippo-cost-off', 'isac_cost', 'ippo', False, 0),
+    ('history-ippo-l1', 'hybrid_history_markov', 'ippo', False, 1),
+    ('history-ippo-l4', 'hybrid_history_markov', 'ippo', False, 4),
 )
 ALGORITHM_CONFIG = dict(collection_steps=32, hidden_dims=[64, 64], learning_rate=.0003,
                         num_learning_epochs=4, num_mini_batches=4, gamma=.99, lam=.95,
@@ -72,49 +70,32 @@ def first_episode_metrics(events: Iterable[dict], *, worlds: int, discount: floa
     return rows
 
 
-def _archive(directory, composition=None):
+def _archive(directory):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as archive:
         for path in sorted(directory.rglob('*')):
             if path.is_file() and '__pycache__' not in path.parts:
                 relative = path.relative_to(directory).as_posix()
-                if relative == 'training_package.yaml' and composition is not None:
-                    archive.writestr(relative, yaml.safe_dump(composition, sort_keys=False))
-                else:
-                    archive.write(path, relative)
+                archive.write(path, relative)
     return buffer.getvalue()
 
 
 def build_variants(examples: Path) -> list[dict]:
-    """IPPO 注册另一份真实 composition；其余差异只用已有请求覆盖。"""
+    """选择同包内显式命名组合，cost/history 保持已有请求覆盖语义。"""
     variants = []
-    for name, scenario, algorithm, costs, history in CONFIGURATIONS:
+    for name, scenario, composition_id, costs, history in CONFIGURATIONS:
         source = examples / scenario
         request = json.loads((source / 'request_train.json').read_text())
-        composition = None
-        request['algorithm_id'] = algorithm
+        request['composition_id'] = composition_id
         request['algorithm_config'] = deepcopy(ALGORITHM_CONFIG)
-        if algorithm == 'builtin:mappo':
+        if composition_id in ('mappo_cost_on', 'mappo_cost_off'):
             request['algorithm_config'].update(share_actor_parameters=True, recurrent=None)
         if not costs:
             request['cost_config'] = dict(roles={}, world={})
-        if scenario == 'isac_cost':
-            if algorithm == 'builtin:ippo':
-                composition = yaml.safe_load((source / 'training_package/training_package.yaml').read_text())
-                composition['algorithm'] = algorithm
-                composition['algorithm_config'] = deepcopy(ALGORITHM_CONFIG)
-                del composition['critic_inputs']
-                del composition['world_reward_terms']
-                del composition['world_cost_terms']
-                for role in composition['agent_roles'].values():
-                    for selection in role['reward_terms']:
-                        selection['default_enabled'] = True
-            elif not costs:
-                request['term_config'] = {'world': {'cost': {'mission': {'enabled': False}}}}
-        else:
+        if scenario == 'hybrid_history_markov':
             request['term_config'] = {'roles': {'pilot': {'observation': {'feedback': {'history_length': history}}}}}
         variants.append(dict(name=name, scenario=scenario, request=request,
-                             package=_archive(source / 'training_package', composition),
+                             package=_archive(source / 'training_package'),
                              environment=_archive(source / 'environment')))
     return variants
 

@@ -14,12 +14,31 @@ def test_descriptor_data_roundtrip_and_candidates(descriptor):
     assert PackageDescriptor.model_validate_json(encoded) == descriptor
     validate_composition(PackageDescriptor.model_validate_json(encoded))
     assert 'implementation' not in data['terms']['progress']
-    choices = data['composition']['agent_roles']['scout']['reward_terms']
+    choices = data['compositions']['default']['agent_roles']['scout']['reward_terms']
     assert [s['selection_id'] for s in choices] == ['progress', 'progress_aux']
     assert choices[0]['required'] is True
     assert choices[1]['default_enabled'] is False
     assert data['tasks'] == {}
     assert set(data['algorithms']) == {'cpu_rule', 'alternate'}
+
+
+def test_descriptor_retains_multiple_named_compositions(definition, composition):
+    alternate = deepcopy(composition)
+    alternate['algorithm'] = 'alternate'
+    result = build_descriptor(definition, {'default': composition, 'alternate': alternate}, 'a' * 64,
+                              default_composition_id='default')
+    assert result.sdk_version == '0.2'
+    assert result.default_composition_id == 'default'
+    assert result.compositions['default'].algorithm == 'cpu_rule'
+    assert result.compositions['alternate'].algorithm == 'alternate'
+
+
+def test_descriptor_rejects_missing_default_and_bad_option(definition, composition):
+    with pytest.raises((ConfigError, ValueError)):
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='missing')
+    composition['model_bindings'] = {'radio': {'default': 'not_an_option', 'options': {}}}
+    with pytest.raises((ConfigError, ValueError)):
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 @pytest.mark.parametrize('change', [
@@ -29,42 +48,42 @@ def test_descriptor_data_roundtrip_and_candidates(descriptor):
 def test_bad_selection_rejected(definition, composition, change):
     composition['agent_roles']['scout']['reward_terms'][0].update(change)
     with pytest.raises((ConfigError, ValueError)):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_duplicate_selection_and_wrong_kind(definition, composition):
     rows = composition['agent_roles']['scout']['reward_terms']
     rows.append(deepcopy(rows[0]))
     with pytest.raises(ConfigError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
     rows.pop()
     rows[0]['term'] = 'collision'
     with pytest.raises(ConfigError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_nonreward_weight_and_bad_scope(definition, composition):
     composition['world_termination_terms'][0]['weight'] = 2.0
     with pytest.raises(ConfigError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
     composition['world_termination_terms'][0].pop('weight')
     term = definition.terms['progress']
     definition.terms['progress'] = replace(term, scope='world', output_spec={**term.output_spec, 'shape': ['B']})
     with pytest.raises(ConfigError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 @pytest.mark.parametrize('field,value', [('algorithm', 'missing'), ('task', 'missing')])
 def test_unregistered_composition_reference(definition, composition, field, value):
     composition[field] = value
     with pytest.raises(ConfigError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_describe_id_must_match_registration(definition, composition):
     definition.algorithms['wrong'] = definition.algorithms['cpu_rule']
     with pytest.raises(ConfigError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_field_path_must_be_specific_and_phase_known(definition, composition):
@@ -72,25 +91,25 @@ def test_field_path_must_be_specific_and_phase_known(definition, composition):
     for path, phase in [(['network'], 'post_physics'), (['task', 'value'], 'future')]:
         definition.terms['progress'] = replace(term, input_fields=({'path': path, 'phase': phase, 'tensor': term.output_spec},))
         with pytest.raises(ValueError):
-            build_descriptor(definition, composition, 'a' * 64)
+            build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_schema_and_supplied_disabled_values_checked(definition, composition):
     composition['agent_roles']['scout']['reward_terms'][1]['config'] = {'scale': 'bad'}
     with pytest.raises(ConfigError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_unknown_composition_field_is_not_silently_ignored(definition, composition):
     composition['agorithm'] = 'cpu_rule'
     with pytest.raises(ValueError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_unconsumed_model_config_values_is_not_an_accepted_option(definition, composition):
     composition['model_config_values'] = {'radio': {'ignored_parameter': 1}}
     with pytest.raises(ValueError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 def test_descriptor_ingestion_validates_schema_before_use(descriptor):
@@ -109,7 +128,7 @@ def test_algorithm_describe_requires_full_static_contract(definition, compositio
             return {'algorithm_id': 'cpu_rule', 'config_schema': config_model}
     definition.algorithms['cpu_rule'] = Incomplete
     with pytest.raises(ValueError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 @pytest.mark.parametrize('path', [['unknown_root', ''], ['task', ''], ['task', 'value()'], ['task', {'binding': 'unknown'}]])
@@ -117,7 +136,7 @@ def test_input_path_syntax_is_validated(definition, composition, path):
     term = definition.terms['progress']
     definition.terms['progress'] = replace(term, input_fields=({'path': path, 'phase': 'post_physics', 'tensor': term.output_spec},))
     with pytest.raises(ValueError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 @pytest.mark.parametrize('kind,identity,fields', [
@@ -144,11 +163,11 @@ def test_other_describe_kinds_have_required_static_fields(definition, compositio
                 raise AssertionError('not executed during registration')
         Declared = Concrete
     getattr(definition, kind)['example'] = Declared
-    descriptor = build_descriptor(definition, composition, 'a' * 64)
+    descriptor = build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
     assert 'example' in getattr(descriptor, kind)
     meta.pop('input_fields')
     with pytest.raises(ValueError):
-        build_descriptor(definition, composition, 'a' * 64)
+        build_descriptor(definition, {'default': composition}, 'a' * 64, default_composition_id='default')
 
 
 @pytest.mark.parametrize('field', ['missing', 'motion'])
@@ -162,4 +181,4 @@ def test_schedule_binding_rejects_missing_or_noninteger_config_field(field):
             return {**super().describe(), 'training_schedule': {'collection_steps': field}}
 
     with pytest.raises(ValueError, match='integer config field'):
-        build_descriptor(TrainingPackageDefinition({}, {}, {'constant_velocity': InvalidSchedule}, {}, {}), {}, 'a' * 64)
+        build_descriptor(TrainingPackageDefinition({}, {}, {'constant_velocity': InvalidSchedule}, {}, {}), {}, 'a' * 64, default_composition_id=None)

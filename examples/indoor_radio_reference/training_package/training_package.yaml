@@ -1,20 +1,24 @@
-algorithm: indoor_radio_rule
-algorithm_config:
-  phases:
-    - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0, channel_id: 7}
-    - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0.0001, channel_id: 7}
-    - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: 7}
-    - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
-  world_power_scales: [1, 1]
-model_bindings: {radio: 'builtin:indoor_office_radio'}
-agent_roles:
-  pilot:
-    entity_kind: aerial_vehicle
-    action_interfaces: {motion: body_velocity, radio: power_channel}
-    observation_terms:
-      - {selection_id: target, term: 'builtin:relative_target', required: true}
-world_reward_terms:
-  - {selection_id: rate, term: radio_rate, required: true}
-world_termination_terms:
-  - {selection_id: done, term: upload_done, default_enabled: false}
-  - {selection_id: episode_limit, term: 'builtin:timeout', config: {episode_max_steps: 500}}
+default_composition_id: default
+compositions:
+  default:
+    algorithm: indoor_radio_rule
+    algorithm_config:
+      phases:
+        - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0, channel_id: 7}
+        - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0.0001, channel_id: 7}
+        - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: 7}
+        - {duration_decisions: 50, motion: [0, 0.1, 0, 0], power_w: 0.001, channel_id: -3}
+      world_power_scales: [1, 1]
+    model_bindings:
+      radio: {default: 'builtin:indoor_office_radio', options: {'builtin:indoor_office_radio': {config: {}}}}
+    agent_roles:
+      pilot:
+        entity_kind: aerial_vehicle
+        action_interfaces: {motion: body_velocity, radio: power_channel}
+        observation_terms:
+          - {selection_id: target, term: 'builtin:relative_target', required: true}
+    world_reward_terms:
+      - {selection_id: rate, term: radio_rate, required: true}
+    world_termination_terms:
+      - {selection_id: done, term: upload_done, default_enabled: false}
+      - {selection_id: episode_limit, term: 'builtin:timeout', config: {episode_max_steps: 500}}

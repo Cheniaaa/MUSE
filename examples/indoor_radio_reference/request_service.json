@@ -37,7 +37,7 @@
       "services": [{"service_id": "upload", "link_id": "up", "resource_ids": ["band_a", "band_b"], "initial_bits": 2000000}]
     }
   },
-  "task_id": null, "algorithm_id": "indoor_radio_rule",
+  "composition_id": "default",
   "role_config": {"pilot": {"group_id": "uav_group", "slots": [0, 1]}},
   "term_config": {"world": {"termination": {"done": {"enabled": true}}}},
   "model_config": {"radio": {"receiver_noise_temperature_k": 290, "receiver_noise_figure_db": 7}},

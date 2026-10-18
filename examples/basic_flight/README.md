@@ -164,8 +164,8 @@ CPU测试使用 `device='cpu'` 仅验证RunPlan线格式，不执行CPU物理。
 | 模块 | 签名/行为 |
 |---|---|
 | `muse_server.resolver` | `resolve_experiment(request: dict, catalog_snapshot: CatalogSnapshot) -> ValidationReport` |
-| 同上 | `resolve_package_selections(descriptor, term_config, builtin_catalog=None) -> ResolvedPackageSelection`；保留M0诊断用途 |
-| `muse_sdk.descriptor` | `build_descriptor(definition, composition, package_hash, builtin_catalog=None) -> PackageDescriptor` |
+| 同上 | `resolve_package_selections(descriptor, term_config, builtin_catalog=None, *, composition) -> ResolvedPackageSelection`；显式传入所选组合 |
+| `muse_sdk.descriptor` | `build_descriptor(definition, compositions, package_hash, builtin_catalog=None, *, default_composition_id) -> PackageDescriptor` |
 | 同上 | `parse_descriptor_json(content, builtin_catalog=None) -> PackageDescriptor`；`validate_composition(descriptor, builtin_catalog=None) -> None` |
 | `muse_builtins.metadata` | `export_metadata(controller_path: Path) -> BuiltinMetadata`；CLI参数见上文 |
 | `muse_server.catalog` | `Catalog(directory: Path, builtin_metadata: Path)` |
@@ -197,13 +197,13 @@ Server不import Runtime/builtin/用户包；环境hash通过独立CPU子进程�
 | `RoleConfig` | `group_id, slots` |
 | `Topology` | `world_count` |
 | `Preview` | `world_ids`（当期一个world）, `rate_hz`（1..30） |
-| `ExperimentRequest` | `environment_id, environment_revision, training_package_id, training_package_revision, scenario, task_id, task_config, algorithm_id, role_config, term_config, model_config, algorithm_config, topology, root_seed, preview` |
+| `ExperimentRequest` | `environment_id, environment_revision, training_package_id, training_package_revision, composition_id, scenario, task_config, role_config, term_config, model_choices, model_config, algorithm_config, topology, root_seed, preview` |
 | `ActionSpec` | `interface, dtype, shape, fields, units, frames, minimum, maximum` |
 | `EntityBindingPlan` | `role_id, group_id, model_id, entity_kind, role_slot_count, role_slot_to_group_slot, action_interfaces, controller_id, sensor_profile_id, network_profile_id=None` |
 | `BoundSelection(ResolvedSelection)` | M0字段 `owner_path, term_kind, selection_id, term, enabled, config, weight, binding_role_id`；新增 `input_fields, output_spec, time_out, cost_id` |
 | `ActionSlice` | `role_id, field='motion', start, stop, shape`；start/stop为每world packed轴，不乘B |
 | `AlgorithmInputs` | `observations, actors, critics`；保持通用输入、role actor和critic group的声明归属 |
-| `ExperimentDefinition` | `environment, environment_scene, environment_metadata, training_package, entity_models, platform_revision, scenario, bindings, controllers, sensors, task_id, task_config, algorithm_id, algorithm_config, training_schedule, algorithm_inputs, role_inputs, selections, termination_reasons, action_specs, action_layout, activation, model_bindings, costs, topology, root_seed, preview` |
+| `ExperimentDefinition` | `environment, environment_scene, environment_metadata, training_package, entity_models, platform_revision, composition_id, scenario, bindings, controllers, sensors, task_id, task_config, algorithm_id, algorithm_config, training_schedule, algorithm_inputs, role_inputs, selections, termination_reasons, action_specs, action_layout, activation, model_bindings, costs, topology, root_seed, preview` |
 | `ValidationReport` | `valid, resolved_experiment, errors, warnings`；CPU成功仍明确提示GPU未验证 |
 | `RunPlan` | `run_id, experiment_id, mode, device, platform_revision, artifact_directory, resource_paths, experiment, max_decision_steps, timeouts, checkpoint_artifact_id=None` |
 | `BuiltinMetadata` | `platform_revision, descriptor, entity_models, controllers, sensors` |

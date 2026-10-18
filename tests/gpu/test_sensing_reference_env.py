@@ -49,7 +49,7 @@ def step_sensing(env, rule):
 
 def powered_request(request):
     """保留示例的role配置，只选择显式不同频1mW阶段。"""
-    composition = yaml.safe_load((SENSING / 'training_package/training_package.yaml').read_text())
+    composition = yaml.safe_load((SENSING / 'training_package/training_package.yaml').read_text())['compositions']['default']
     request['algorithm_config']['phases'] = [deepcopy(composition['algorithm_config']['phases'][2])]
     request['algorithm_config']['phases'][0]['duration_decisions'] = 500
 

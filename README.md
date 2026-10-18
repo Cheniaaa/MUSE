@@ -16,7 +16,7 @@ M2跨阶段审查的四项问题已完成有限修复，当前配置及学习sta
 
 ```bash
 source /project/mjc_ws/.myenv/bin/activate
-PYTHONDONTWRITEBYTECODE=1 python -m muse_server.app --port 8001 --data-dir /tmp/muse-m2-checkpoint
+PYTHONDONTWRITEBYTECODE=1 python -m muse_server.app --port 8001 --data-dir /project/muse-data/workbench-v2
 ```
 
 另一个终端激活同一环境后提交训练：
@@ -26,6 +26,14 @@ PYTHONDONTWRITEBYTECODE=1 python examples/basic_flight/submit.py --mode TRAIN --
 ```
 
 输出包含 `experiment_id`、`run_id` 与 `run_url`。`--no-display` 提交后立即返回；默认尝试打开该 Run 的显示服务。`max-decision-steps` 是本次 Run 的正整数决策步数上限，每步同时推进所有 world。TRAIN 每收满 Experiment 中的 `collection_steps=H`（示例默认 24）才更新一次。预算不足 H 时正常结束但更新次数为 0；非整块尾段不更新，也不保存进 checkpoint，恢复时从新 episode 开始。
+
+## 研究包声明与选择
+
+SDK声明版本为`0.2`。`training_package.yaml`以`compositions`保存完整的平面命名组合，并用`default_composition_id`指定默认项。请求通过`composition_id`选择组合；Task和Algorithm由组合确定，冻结Experiment保留实际`task_id/algorithm_id`。
+
+组合的`model_bindings`按radio/sensing声明`default`及`options`，每个候选包含自己的推荐`config`。请求用`model_choices`选择已声明实现，用`model_config`覆盖该实现参数；选择模型本身不会启用未声明的研究功能。
+
+ISAC同一包提供`mappo_cost_on`、`mappo_cost_off`、`ippo`，不同reward/critic/cost结构在包中明确声明。history包使用`ippo`，历史长度通过selection覆盖；其他现有单组合示例使用`default`。使用新数据目录登记这些声明，历史目录与旧研究产物保留。
 
 ## 查询 checkpoint 并恢复
 

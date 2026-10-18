@@ -85,8 +85,12 @@ def test_variants_use_real_composition_and_keep_scenario_and_actor_inputs(benchm
     for variant in variants:
         with zipfile.ZipFile(io.BytesIO(variant['package'])) as archive:
             packages.append(yaml.safe_load(archive.read('training_package.yaml')))
-    on, off, ippo, l1, l4 = packages
-    assert on == off
+    assert packages[0] == packages[1] == packages[2]
+    on, off, ippo, l1, l4 = [package['compositions'][variant['request']['composition_id']]
+                            for package, variant in zip(packages, variants)]
+    from muse_sdk.descriptor import Composition
+    assert Composition.model_validate(on).world_cost_terms[0].default_enabled is True
+    assert off['world_cost_terms'][0]['default_enabled'] is False
     assert ippo['algorithm'] == 'builtin:ippo'
     assert not ippo.get('critic_inputs')
     assert not ippo.get('world_reward_terms')
@@ -98,7 +102,7 @@ def test_variants_use_real_composition_and_keep_scenario_and_actor_inputs(benchm
     assert variants[0]['request']['scenario'] == variants[1]['request']['scenario'] == variants[2]['request']['scenario']
     assert variants[0]['request']['cost_config']['world']['mission_position_violation']['budget'] == 5
     assert variants[1]['request']['cost_config'] == variants[2]['request']['cost_config'] == {'roles': {}, 'world': {}}
-    assert variants[1]['request']['term_config']['world']['cost']['mission']['enabled'] is False
+    assert variants[1]['request']['composition_id'] == 'mappo_cost_off'
     assert [v['request']['term_config']['roles']['pilot']['observation']['feedback']['history_length']
             for v in variants[3:]] == [1, 4]
     assert l1 == l4
@@ -117,7 +121,7 @@ def test_variants_use_real_composition_and_keep_scenario_and_actor_inputs(benchm
         assert request['algorithm_config']['value_loss_coef'] == 1
         assert request['algorithm_config']['entropy_coef'] == .01
         assert request['algorithm_config']['max_grad_norm'] == 1
-        if request['algorithm_id'] == 'builtin:mappo':
+        if request['composition_id'] in ('mappo_cost_on', 'mappo_cost_off'):
             assert request['algorithm_config']['share_actor_parameters'] is True
             assert request['algorithm_config']['recurrent'] is None
         else:
@@ -230,7 +234,7 @@ class HttpBoundary:
     def make_artifacts(self, identity):
         run = self.runs[identity]
         worlds = run['experiment']['topology']['world_count']
-        sensing = run['experiment']['task_id'] == 'isac_task'
+        sensing = 'sensing' in run['experiment']['model_config']
         events = []
         decisions = min(run['max_decision_steps'], 500)
         if (self.stalled or self.global_stall) and int(identity.removeprefix('run-')) == self.stall_index:

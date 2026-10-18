@@ -58,8 +58,6 @@ def build_training_package():
     if train:
         request['algorithm_config'].update(collection_steps=4, num_learning_epochs=1, num_mini_batches=1)
         request['term_config'] = {'world': {'termination': {'episode_limit': {'config': {'episode_max_steps': 4}}}}}
-    if local_algorithm:
-        request['algorithm_id'] = 'custom_ippo'
     validated = client.post('/experiments/validate', json=request)
     assert validated.status_code == 200 and validated.json()['valid'], validated.text
     saved = client.post('/experiments', json=request)
@@ -138,7 +136,7 @@ def test_real_api_registration_resolution_run_events_and_artifacts(client):
 
 def test_run_budget_and_unsupported_mode_boundary(client):
     identity, _ = register_experiment(client, train=True)
-    for budget in (None, 0, -1, True, 1.5, '8', 6):
+    for budget in (None, 0, -1, True, 1.5, '8'):
         payload = dict(experiment_id=identity, mode='TRAIN', max_decision_steps=budget)
         response = client.post('/runs', json=payload)
         assert response.status_code == 422, response.text
@@ -148,7 +146,12 @@ def test_run_budget_and_unsupported_mode_boundary(client):
     response = client.post('/runs', json=dict(experiment_id=identity, mode='TRAIN', max_decision_steps=8,
                                             resource_paths={'environment': '/tmp/user-path'}))
     assert response.status_code == 422
-    assert client.post('/runs', json=dict(experiment_id=identity, mode='TRAIN', max_decision_steps=8)).status_code == 201
+    for budget in (1, 6, 8):
+        response = client.post('/runs', json=dict(experiment_id=identity, mode='TRAIN', max_decision_steps=budget))
+        assert response.status_code == 201, response.text
+        plan = client.app.state.supervisor.get_plan(response.json()['run_id'])
+        assert plan.max_decision_steps == budget
+        assert plan.experiment.training_schedule.collection_steps == 4
 
 
 def test_save_resolves_input_and_does_not_accept_frozen_forgery(client):

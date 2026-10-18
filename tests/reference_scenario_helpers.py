@@ -2,11 +2,8 @@
 import json
 from contextlib import contextmanager
 from pathlib import Path
-import shutil
 import subprocess
 import sys
-
-import yaml
 
 from flight_helpers import EXAMPLE, archive
 
@@ -35,33 +32,16 @@ def reference_catalog(root: Path, *, scenario: str, algorithm: str, costs: bool,
                     '--controller', str(EXAMPLE / 'controller.json')], check=True)
     catalog = Catalog(root / 'catalog', metadata)
     environment = catalog.register_archive('environment', archive(source / 'environment', root / 'environment.zip'))
-    package = root / 'package'
-    shutil.copytree(source / 'training_package', package)
-    composition = yaml.safe_load((package / 'training_package.yaml').read_text())
-    composition['algorithm'] = 'builtin:' + algorithm
-    if scenario == 'isac_cost' and algorithm == 'ippo':
-        composition.pop('critic_inputs')
-        composition['world_reward_terms'] = []
-        composition['world_cost_terms'] = []
-        for role in composition['agent_roles'].values():
-            role['reward_terms'][0]['default_enabled'] = True
-    elif scenario == 'isac_cost' and not costs:
-        composition['world_cost_terms'][0]['default_enabled'] = False
-    if scenario == 'hybrid_history_markov':
-        for role in composition['agent_roles'].values():
-            next(selection for selection in role['observation_terms']
-                 if selection['selection_id'] == 'feedback')['history_length'] = history_length
-    # MAPPO专属配置不进入IPPO schema。
-    if algorithm == 'ippo':
-        composition['algorithm_config'].pop('share_actor_parameters', None)
-        composition['algorithm_config'].pop('recurrent', None)
-    (package / 'training_package.yaml').write_text(yaml.safe_dump(composition, sort_keys=False))
-    record = catalog.register_archive('training_package', archive(package, root / 'package.zip'))
+    record = catalog.register_archive('training_package', archive(source / 'training_package', root / 'package.zip'))
     request = json.loads((source / 'request_train.json').read_text())
     request.update(environment_id=environment.resource_id, environment_revision=environment.revision,
                    training_package_id=record.resource_id, training_package_revision=record.revision,
-                   algorithm_id='builtin:' + algorithm)
+                   composition_id=('mappo_cost_on' if costs else 'mappo_cost_off')
+                   if algorithm == 'mappo' else 'ippo')
     request['topology']['world_count'] = worlds
+    if scenario == 'hybrid_history_markov':
+        request['term_config'] = {
+            'roles': {'pilot': {'observation': {'feedback': {'history_length': history_length}}}}}
     if not costs:
         request['cost_config'] = {'roles': {}, 'world': {}}
     return catalog, request

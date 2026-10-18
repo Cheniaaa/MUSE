@@ -92,13 +92,13 @@ class ExperimentRequest(DataModel):
     training_package_id: str
     training_package_revision: int = Field(gt=0)
     scenario: ScenarioDefinition
-    task_id: str | None = None
+    composition_id: str = Field(min_length=1)
     task_config: dict = Field(default_factory=dict)
-    algorithm_id: str
     role_config: dict[str, RoleConfig]
     term_config: dict = Field(default_factory=dict)
     cost_config: dict = Field(default_factory=dict)
     model_parameters: dict = Field(default_factory=dict, alias='model_config')
+    model_choices: dict[Literal['radio', 'sensing'], str] = Field(default_factory=dict)
     algorithm_config: dict = Field(default_factory=dict)
     topology: Topology
     root_seed: int = Field(ge=0)
@@ -216,6 +216,7 @@ class ExperimentDefinition(DataModel):
     bindings: dict[str, EntityBindingPlan]
     controllers: dict[str, dict]
     sensors: dict[str, dict]
+    composition_id: str
     task_id: str | None
     task_config: dict
     task_spec: BoundTask | None = None
