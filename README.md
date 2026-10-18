@@ -27,6 +27,12 @@ PYTHONDONTWRITEBYTECODE=1 python examples/basic_flight/submit.py --mode TRAIN --
 
 输出包含 `experiment_id`、`run_id` 与 `run_url`。`--no-display` 提交后立即返回；默认尝试打开该 Run 的显示服务。`max-decision-steps` 是本次 Run 的正整数决策步数上限，每步同时推进所有 world。TRAIN 每收满 Experiment 中的 `collection_steps=H`（示例默认 24）才更新一次。预算不足 H 时正常结束但更新次数为 0；非整块尾段不更新，也不保存进 checkpoint，恢复时从新 episode 开始。
 
+## 桌面研究工作台
+
+Windows GUI 工程位于 `E:/Projects/Python/03_Work/Lab/MUSE`，激活其 `.venv` 后以 `python -m muse_gui` 启动。首次在设置页填写 WSL 项目、环境和数据目录，或连接已启动的 Server；GUI 使用 API revision 2。草稿、资源 revision、CPU 场景预览、Run 控制与持久结果通过同一 HTTP/WS 控制面交互。
+
+关闭 GUI 只释放该客户端和 CPU 草稿预览，后台 Run 继续。设置页“停止本机后端”是独立操作，会取消活动 Run 并保留排队项；CLI 身份查询入口为 `python -m muse_server.local_backend status --data-dir <目录>`。使用新数据目录，旧研究产物不迁移。操作说明见 GUI README，工程验收状态与原始证据见[研究工作台验收记录](docs/validation/m5-research-workbench.md)。
+
 ## 研究包声明与选择
 
 SDK声明版本为`0.2`。`training_package.yaml`以`compositions`保存完整的平面命名组合，并用`default_composition_id`指定默认项。请求通过`composition_id`选择组合；Task和Algorithm由组合确定，冻结Experiment保留实际`task_id/algorithm_id`。
