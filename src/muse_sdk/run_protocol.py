@@ -123,10 +123,27 @@ class DisplayPatch(DataModel):
         return self
 
 
+class SceneObject(DataModel):
+    """草稿与 Run 共用的静态身份；原生映射仅供内部显示消费者。"""
+    object_id: str
+    label: str
+    kind: Literal['environment', 'entity']
+    group_id: str | None
+    group_slot: int | None
+    role_id: str | None
+    model_id: str | None
+    body_id: int | None
+    geom_ids: list[int] | None
+    # 环境 geom 相对所属 body 的冷映射；矩阵为 row-major 9 元素，entity root 不需要。
+    local_position: list[float] | None = None
+    local_orientation_matrix: list[float] | None = None
+
+
 class PreviewModel(DataModel):
     path: str
     sha256: str = Field(pattern='^[0-9a-f]{64}$')
     nbody: int = Field(gt=0)
+    objects: list[SceneObject]
 
 
 class PreviewApplied(DataModel):

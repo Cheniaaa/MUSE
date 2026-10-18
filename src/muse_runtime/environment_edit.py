@@ -1,6 +1,7 @@
 """CPU 原生环境编辑；输入为 Catalog 已校验的不可变资源目录。"""
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -11,6 +12,14 @@ import yaml
 from muse_sdk.config import ConfigError
 from muse_sdk.experiment import EnvironmentBundle, Pose, ResourceRef
 from muse_sdk.scene_edit import BoxEdit, EnvironmentEdit, EnvironmentManifest, EnvironmentObject
+
+
+def load_environment_spec(root: Path, scene: str):
+    """环境契约为MJCF XML；显式解析内容，不按.xml/.mjcf后缀猜测解码器。"""
+    scene_path = root / scene
+    assets = {os.path.relpath(path, scene_path.parent): path.read_bytes()
+              for path in root.rglob('*') if path.is_file()}
+    return mujoco.MjSpec.from_string(scene_path.read_text(), include=assets, assets=assets)
 
 
 def _referenced_geoms(model) -> dict[int, str]:
@@ -38,7 +47,7 @@ def _referenced_geoms(model) -> dict[int, str]:
 def _inspect(root: Path, reference: ResourceRef):
     document = yaml.safe_load((root / 'environment.yaml').read_text(encoding='utf-8'))
     bundle = EnvironmentBundle.model_validate(document)
-    spec = mujoco.MjSpec.from_file(str(root / bundle.scene))
+    spec = load_environment_spec(root, bundle.scene)
     # fusestatic 编译会改写 spec 树；识别边界必须保留作者原始层级。
     model = spec.copy().compile()
     references = _referenced_geoms(model)

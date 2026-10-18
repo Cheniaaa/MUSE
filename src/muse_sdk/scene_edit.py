@@ -1,11 +1,11 @@
-"""有限环境编辑的 JSON 边界；不包含运行时 overlay 或预览协议。"""
+"""有限环境编辑和冷路径预览的 JSON 边界；不包含运行时 overlay。"""
 import math
 from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
 
 from .config import DataModel
-from .experiment import Pose, ResourceRef
+from .experiment import EntityModelRef, Pose, ResourceRef
 
 
 class BoxEdit(DataModel):
@@ -51,3 +51,44 @@ class EnvironmentObject(DataModel):
 class EnvironmentManifest(DataModel):
     base: ResourceRef
     objects: list[EnvironmentObject]
+
+
+class PreviewEntityRequest(DataModel):
+    object_id: str = Field(min_length=1)
+    group_id: str = Field(min_length=1)
+    slot: int = Field(ge=0)
+    model_id: str
+    model_revision: int = Field(gt=0)
+    pose: Pose
+    sensor_profile_id: str | None = None
+    sensor_config: dict = Field(default_factory=dict)
+
+    @field_validator('pose')
+    @classmethod
+    def unit_quaternion(cls, value):
+        return BoxEdit.unit_quaternion(value)
+
+
+class ScenePreviewRequest(DataModel):
+    draft_id: str = Field(min_length=1)
+    revision: int = Field(ge=0)
+    environment: ResourceRef
+    environment_edit: EnvironmentEdit | None = None
+    entities: list[PreviewEntityRequest]
+
+    @model_validator(mode='after')
+    def distinct_entities(self):
+        if len({entity.object_id for entity in self.entities}) != len(self.entities):
+            raise ValueError('Duplicate preview object ID')
+        if len({(entity.group_id, entity.slot) for entity in self.entities}) != len(self.entities):
+            raise ValueError('Duplicate preview group/slot')
+        return self
+
+
+class PreviewEntity(DataModel):
+    object_id: str
+    group_id: str
+    slot: int
+    model: EntityModelRef
+    pose: Pose
+    sensor_outputs: list[dict]

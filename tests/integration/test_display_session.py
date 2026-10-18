@@ -89,7 +89,7 @@ p = WorkerProtocol(plan.run_id)
 s = socket.socket(fileno=int(os.environ['MUSE_PREVIEW_FD']))
 s.setblocking(False)
 model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body><freejoint/><geom type="box" size=".1 .2 .3"/></body></worldbody></mujoco>')
-metadata = export_model(model, Path(plan.artifact_directory))
+metadata = export_model(model, Path(plan.artifact_directory), objects=[])
 p.emit('preview_model', metadata.model_dump())
 p.emit('running')
 current = None
@@ -187,12 +187,12 @@ def test_model_hash_nbody_and_capacity_fail_explicitly(tmp_path):
     from muse_server.viewers.viser_process import load_model
     from muse_sdk.run_protocol import preview_socketpair, check_preview_capacity
     model = mujoco.MjModel.from_xml_string('<mujoco/>')
-    first = export_model(model, tmp_path)
+    first = export_model(model, tmp_path, objects=[])
     assert load_model(tmp_path / first.path, first.sha256, first.nbody).nbody == 1
     with pytest.raises(ValueError, match='nbody'):
         load_model(tmp_path / first.path, first.sha256, 2)
     model.opt.gravity[2] = -1.
-    second = export_model(model, tmp_path)
+    second = export_model(model, tmp_path, objects=[])
     assert second.sha256 != first.sha256
     with pytest.raises(ValueError, match='hash'):
         load_model(tmp_path / first.path, first.sha256, first.nbody)
@@ -319,7 +319,7 @@ def test_paused_real_viewer_drains_to_latest_current_selection(tmp_path):
     from muse_sdk.run_protocol import preview_socketpair
     from test_supervisor import wait_for
     model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body><freejoint/><geom size=".1"/></body></worldbody></mujoco>')
-    metadata = export_model(model, tmp_path)
+    metadata = export_model(model, tmp_path, objects=[])
     sender, receiver = preview_socketpair()
     command = [sys.executable, '-m', 'muse_server.viewers.viser_process', '--snapshot-fd', str(receiver.fileno()),
         '--model', str(tmp_path / metadata.path), '--sha256', metadata.sha256, '--nbody', str(model.nbody),

@@ -535,7 +535,10 @@ def test_declared_entity_asset_is_frozen_and_used(pipeline, tmp_path):
     assert report.valid, report.errors
     # CPU MjSpec即可验证文件选择，不创建Simulation或占用GPU。
     (tmp_path / 'renamed.xml').write_text('<mujoco><worldbody><body name="cf2"><freejoint/><geom size=".1"/></body></worldbody></mujoco>')
-    scene, _ = assemble_scene(report.resolved_experiment, {'entity_model:bitcraze_crazyflie_2': str(tmp_path)})
+    environment = next(record for record in snapshot.resources
+                       if record.resource_id == source['environment_id'] and record.revision == source['environment_revision'])
+    scene, _ = assemble_scene(report.resolved_experiment, {'entity_model:bitcraze_crazyflie_2': str(tmp_path),
+                                                         'environment': environment.path})
     assert scene.entities['scout_group_0'].spec_fn().body('cf2') is not None
 
 

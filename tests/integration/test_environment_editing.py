@@ -100,6 +100,21 @@ def test_box_edit_roundtrip_keeps_base_immutable(environment, tmp_path):
     assert after == inspect_editable_environment(destination, derived_ref)
 
 
+def test_mjcf_scene_extension_uses_the_same_native_xml_contract(environment, tmp_path):
+    from muse_runtime.environment_edit import derive_environment, inspect_editable_environment
+    from muse_sdk.scene_edit import EnvironmentEdit
+    root, reference = environment
+    (root / 'scene.xml').rename(root / 'scene.mjcf')
+    path = root / 'environment.yaml'
+    path.write_text(path.read_text().replace('scene.xml', 'scene.mjcf'))
+    reference = reference.model_copy(update={'sha256': hash_package(root)})
+    manifest = inspect_editable_environment(root, reference)
+    assert next(obj for obj in manifest.objects if obj.object_id == 'wall').editable
+    destination = tmp_path / 'derived-mjcf'
+    derive_environment(root, EnvironmentEdit(base=reference, upserts={'wall': box()}, removed=[]), destination)
+    assert mujoco.MjModel.from_xml_path(str(destination / 'scene.mjcf')).geom('wall').size.tolist() == [1., 2., 3.]
+
+
 @pytest.mark.parametrize('collision,rf_blocking', [(False, True), (True, False), (False, False), (True, True)])
 def test_collision_and_rf_are_independent(environment, tmp_path, collision, rf_blocking):
     from muse_runtime.environment_edit import derive_environment, inspect_editable_environment

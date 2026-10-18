@@ -7,7 +7,7 @@ import torch
 import yaml
 
 from muse_sdk.content import hash_package
-from muse_sdk.experiment import EnvironmentBundle, Pose, ResourceRef, ScenarioDefinition, Topology
+from muse_sdk.experiment import EntityModelRef, EnvironmentBundle, Pose, ResourceRef, ScenarioDefinition, Topology
 from muse_sdk.geometry import GeometryPoint, PropagationPath, PropagationPathLayout, ResolvedGeometry
 from muse_sdk.scene_edit import BoxEdit, EnvironmentEdit
 
@@ -44,7 +44,8 @@ def test_moved_wall_changes_runtime_contact_and_los_with_identical_cpu_geometry(
         scene=dict(physics_dt=.002, control_substeps=1, integrator='RK4', density=0.,
                    viscosity=0., precision='float32'), command_targets_world={}))
     experiment = SimpleNamespace(scenario=scenario, topology=Topology(world_count=1),
-        entity_models={'probe': SimpleNamespace(physics_asset='probe.xml', root_body='probe')},
+        entity_models={'probe': EntityModelRef(resource_id='probe', revision=1, sha256=hash_package(asset),
+            physics_asset='probe.xml', root_body='probe', support_geoms=[])},
         sensors={}, activation=[], environment_scene='scene.xml')
     layout = PropagationPathLayout(points=tuple(GeometryPoint(group_id='probe_group', slot=slot,
         device_id='radio', body='probe', position_m=(0., 0., 0.), assumption='test contact probe')

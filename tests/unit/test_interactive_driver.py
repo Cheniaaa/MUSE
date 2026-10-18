@@ -184,6 +184,7 @@ def test_worker_routes_ack_and_services_preview_while_paused(monkeypatch, cancel
     env.cfg, env.physics_dt = NS(decimation=2), .01
     env.sim = NS(mj_model=NS(nbody=1), data=NS(xpos=torch.ones(2, 1, 3),
                                             xmat=torch.ones(2, 1, 9)))
+    env.scene = NS()
     env.close = lambda: None
     original_reset, original_step = env.reset, env.step
 
@@ -213,8 +214,9 @@ def test_worker_routes_ack_and_services_preview_while_paused(monkeypatch, cancel
     monkeypatch.setattr(torch.cuda, 'stream', lambda _: nullcontext())
     monkeypatch.setattr(torch.cuda, 'current_stream', lambda _: stream)
     monkeypatch.setattr(preview, 'check_preview_capacity', lambda *_: None)
-    monkeypatch.setattr(preview, 'export_model', lambda *_:
-        wire.PreviewModel(path='preview.mjb', sha256='a' * 64, nbody=1))
+    monkeypatch.setattr(preview, 'scene_objects', lambda *_: [])
+    monkeypatch.setattr(preview, 'export_model', lambda *_, **__:
+        wire.PreviewModel(path='preview.mjb', sha256='a' * 64, nbody=1, objects=[]))
     monkeypatch.setenv('MUSE_PREVIEW_FD', '999')
     monkeypatch.setattr(worker.socket, 'socket', lambda **_: NS(setblocking=lambda _: None,
         send=lambda packet: packets.append(packet), close=lambda: None))
