@@ -161,12 +161,26 @@ def export_config_schema(model_type: type[BaseModel]) -> dict:
     return schema
 
 
-def _merge(lower: dict, upper: dict) -> dict:
+def _value_origins(value, source, path=''):
+    if isinstance(value, dict) and value:
+        return {pointer: origin for key, item in value.items()
+                for pointer, origin in _value_origins(item, source,
+                    path + '/' + key.replace('~', '~0').replace('/', '~1')).items()}
+    return {path: source} if path else {}
+
+
+def _merge(lower: dict, upper: dict, origins: dict, source: str, path='') -> dict:
     result = deepcopy(lower)
     for key, value in upper.items():
-        result[key] = (_merge(result[key], value)
-                       if isinstance(result.get(key), dict) and isinstance(value, dict)
-                       else deepcopy(value))
+        pointer = path + '/' + key.replace('~', '~0').replace('/', '~1')
+        if isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = _merge(result[key], value, origins, source, pointer)
+        else:
+            result[key] = deepcopy(value)
+            for previous in list(origins):
+                if previous == pointer or previous.startswith(pointer + '/'):
+                    del origins[previous]
+            origins.update(_value_origins(value, source, pointer))
     return result
 
 
@@ -201,17 +215,31 @@ _PartialValidator = validators.extend(Draft202012Validator, {'required': lambda 
 
 def resolve_config(schema: dict, yaml_values: dict, overrides: dict, *, require_complete: bool) -> dict:
     """消费导出/反序列化边界已验证的schema；这里只合并并校验参数值。"""
-    for name, value in (('config', yaml_values), ('overrides', overrides)):
+    values, _ = resolve_config_layers(schema, [('package', yaml_values), ('override', overrides)],
+                                     require_complete=require_complete)
+    return values
+
+
+def resolve_config_layers(schema: dict, layers: list[tuple[str, dict]], *,
+                          require_complete: bool) -> tuple[dict, dict[str, str]]:
+    """同次解析返回有效值和来源；数组为整体覆盖，来源不按索引继承。"""
+    for name, value in layers:
         check_json(value, name)
         if not isinstance(value, dict):
             raise ConfigError(name, 'Expected object')
     # 默认先形成低优先级层，避免显式null后又复活下层对象。
-    defaults = _defaults(schema, {}, schema)
-    merged = _defaults(schema, _merge(_merge(defaults, yaml_values), overrides), schema)
+    merged = _defaults(schema, {}, schema)
+    origins = _value_origins(merged, 'schema')
+    for source, values in layers:
+        merged = _merge(merged, values, origins, source)
+    merged = _defaults(schema, merged, schema)
+    # 新插入对象中的默认字段也由同一_defaults填入，不替换显式null。
+    origins = {path: origins.get(path, 'schema') for path in _value_origins(merged, 'schema')}
     validator = Draft202012Validator if require_complete else _PartialValidator
     errors = list(validator(schema).iter_errors(merged))
     if errors:
         exc = ConfigError('$', 'Invalid configuration')
         exc.errors = [{'field': '.'.join(map(str, e.absolute_path)) or '$', 'message': e.message} for e in errors]
+        exc.effective, exc.origins = merged, origins
         raise exc
-    return merged
+    return merged, origins

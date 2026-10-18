@@ -39,7 +39,8 @@ def test_named_compositions_resolve_without_rewriting_package(pipeline, tmp_path
 def test_model_choice_is_declared_and_revalidated(pipeline):
     from wireless_helpers import wireless_request
     request, snapshot = wireless_request(pipeline)
-    package = next(r for r in snapshot.resources if r.kind == 'training_package')
+    package = next(r for r in snapshot.resources if r.resource_id == request['training_package_id']
+                   and r.revision == request['training_package_revision'])
     composition = package.metadata['compositions']['default']
     package.metadata['radio_models']['link_only'] = {
         **deepcopy(package.metadata['radio_models']['oracle']), 'model_id': 'link_only',
@@ -98,7 +99,8 @@ def test_composition_label_does_not_change_learning_contract(pipeline):
     from muse_sdk.experiment import learning_contract
     catalog, request = pipeline
     snapshot = catalog.snapshot()
-    package = next(r for r in snapshot.resources if r.kind == 'training_package')
+    package = next(r for r in snapshot.resources if r.resource_id == request['training_package_id']
+                   and r.revision == request['training_package_revision'])
     package.metadata['compositions']['equivalent'] = deepcopy(package.metadata['compositions']['default'])
     first = resolve_experiment(request, snapshot).resolved_experiment
     changed = {**request, 'composition_id': 'equivalent'}

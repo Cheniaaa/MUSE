@@ -52,6 +52,51 @@ def test_partial_config_checks_present_values():
         resolve_config(schema, {}, {}, require_complete=True)
 
 
+def test_layer_origins_follow_actual_null_and_list_replacement():
+    from muse_sdk.config import resolve_config_layers
+    schema = export_config_schema(Settings)
+    values, origins = resolve_config_layers(schema, [
+        ('package', {'gains': {'kp': 2.}, 'label': 'package'}),
+        ('scenario', {'budget': 5.}),
+        ('override', {'channels': [3], 'label': None, 'gains': {'ki': .25}}),
+    ], require_complete=True)
+    assert values == {'gains': {'kp': 2., 'ki': .25}, 'channels': [3], 'label': None, 'budget': 5.}
+    assert origins == {'/gains/kp': 'package', '/gains/ki': 'override',
+                       '/channels': 'override', '/label': 'override', '/budget': 'scenario'}
+    partial, partial_origins = resolve_config_layers(schema, [], require_complete=False)
+    assert 'budget' not in partial and '/budget' not in partial_origins
+    assert partial_origins['/gains/kp'] == partial_origins['/channels'] == 'schema'
+
+
+def test_layer_origins_do_not_revive_replaced_objects_or_index_arrays():
+    from muse_sdk.config import resolve_config_layers
+    schema = {'type': 'object', 'properties': {
+        'object': {'anyOf': [{'type': 'object', 'properties': {
+            'a': {'type': 'integer', 'default': 1}, 'b': {'type': 'integer', 'default': 2}}},
+            {'type': 'null'}], 'default': {'a': 4}},
+        'items': {'type': 'array', 'items': {'type': 'object', 'properties': {
+            'x': {'type': 'integer', 'default': 3}}}},
+        'map': {'type': 'object', 'additionalProperties': {'type': 'integer'}},
+    }, 'additionalProperties': False}
+    values, origins = resolve_config_layers(schema, [
+        ('package', {'object': None, 'items': [{'x': 8}, {'x': 9}]}),
+        ('override', {'object': {'b': 6}, 'items': [{}], 'map': {'a/b~c': 7}}),
+    ], require_complete=True)
+    assert values == {'object': {'a': 1, 'b': 6}, 'items': [{'x': 3}], 'map': {'a/b~c': 7}}
+    assert origins == {'/object/a': 'schema', '/object/b': 'override',
+                       '/items': 'override', '/map/a~1b~0c': 'override'}
+
+
+def test_invalid_layer_retains_effective_values_for_inspection():
+    from muse_sdk.config import resolve_config_layers
+    with pytest.raises(ConfigError) as caught:
+        resolve_config_layers(export_config_schema(Settings), [('override', {'budget': 'unfinished'})],
+                              require_complete=False)
+    assert caught.value.effective['budget'] == 'unfinished'
+    assert caught.value.origins['/budget'] == 'override'
+    assert caught.value.errors[0]['field'] == 'budget'
+
+
 @pytest.mark.parametrize('override', [{'gains': {'missing': 1}}, {'gains': None},
                                      {'channels': [True]}, {'channels': [1.2]}])
 def test_invalid_nested_values(override):

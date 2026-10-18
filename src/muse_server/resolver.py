@@ -53,14 +53,7 @@ def resolve_package_selections(descriptor: PackageDescriptor, term_config: dict,
                                composition: Composition) -> ResolvedPackageSelection:
     """descriptor来自build_descriptor或parse_descriptor_json；只处理本次覆盖。"""
     check_json(term_config, 'term_config')
-    allowed = {'roles': {role: {} for role in composition.agent_roles},
-               'critic_inputs': {group: {} for group in composition.critic_inputs}, 'world': {}}
-    for owner, kind, selections in iter_selections(composition):
-        node = allowed
-        for part in (*owner, kind):
-            node = node.setdefault(part, {})
-        node.update({selection.selection_id: None for selection in selections})
-    overrides = _overrides(term_config, allowed)
+    overrides = _selection_overrides(composition, term_config)
     output, inputs = [], []
     reasons = {}
     costs = set()
@@ -104,6 +97,18 @@ def resolve_package_selections(descriptor: PackageDescriptor, term_config: dict,
             ))
     return ResolvedPackageSelection(package_hash=descriptor.package_hash, selections=tuple(output),
                                     termination_reasons=reasons, required_inputs=tuple(deepcopy(inputs)))
+
+
+def _selection_overrides(composition, term_config):
+    """完整解析和草稿检查共用selection身份边界。"""
+    allowed = {'roles': {role: {} for role in composition.agent_roles},
+               'critic_inputs': {group: {} for group in composition.critic_inputs}, 'world': {}}
+    for owner, kind, selections in iter_selections(composition):
+        node = allowed
+        for part in (*owner, kind):
+            node = node.setdefault(part, {})
+        node.update({selection.selection_id: None for selection in selections})
+    return _overrides(term_config, allowed)
 
 
 def _resource(snapshot, kind, identity, revision):
@@ -252,7 +257,9 @@ def resolve_experiment(request: dict, catalog_snapshot: CatalogSnapshot) -> Vali
     try:
         check_json(request)
         data = ExperimentRequest.model_validate(request)
-        experiment = _resolve_flight(data, catalog_snapshot)
+        context = _package_context(catalog_snapshot, data.training_package_id,
+                                   data.training_package_revision, data.composition_id)
+        experiment = _resolve_flight(data, catalog_snapshot, context)
         return ValidationReport(valid=True, resolved_experiment=experiment, errors=[], warnings=[
             {'field': 'physics', 'message': 'CPU resolution only; GPU compile and rollout are not validated'},
         ])
@@ -262,17 +269,21 @@ def resolve_experiment(request: dict, catalog_snapshot: CatalogSnapshot) -> Vali
         return ValidationReport(valid=False, resolved_experiment=None, errors=errors, warnings=[])
 
 
-def _resolve_flight(data, snapshot):
-    import math
-    environment = _resource(snapshot, 'environment', data.environment_id, data.environment_revision)
-    package = _resource(snapshot, 'training_package', data.training_package_id, data.training_package_revision)
-    builtins = snapshot.builtins
-    descriptor = parse_descriptor_json(json.dumps(package.metadata), builtins.descriptor)
-    if data.composition_id not in descriptor.compositions:
+def _package_context(snapshot, package_id, revision, composition_id):
+    package = _resource(snapshot, 'training_package', package_id, revision)
+    descriptor = parse_descriptor_json(json.dumps(package.metadata), snapshot.builtins.descriptor)
+    if composition_id not in descriptor.compositions:
         raise ConfigError('composition_id', 'Unknown package composition')
-    composition = descriptor.compositions[data.composition_id]
     if descriptor.package_hash != package.sha256:
         raise ConfigError('training_package', 'Descriptor does not match registered content hash')
+    return package, descriptor, descriptor.compositions[composition_id]
+
+
+def _resolve_flight(data, snapshot, package_context):
+    import math
+    environment = _resource(snapshot, 'environment', data.environment_id, data.environment_revision)
+    package, descriptor, composition = package_context
+    builtins = snapshot.builtins
     task, task_config = None, {}
     if composition.task is None:
         if data.task_config or composition.task_config:

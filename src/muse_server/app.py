@@ -11,10 +11,12 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, JSONResponse
 
 from muse_sdk.config import ConfigError
+from muse_sdk.experiment import ExperimentRequest, ScenarioDefinition
 from muse_sdk.run_protocol import DisplayPatch, InteractiveCommand, RunRequest, RunTimeouts
 
 from .catalog import Catalog
 from .resolver import resolve_experiment
+from .inspection import inspect_experiment
 from .supervisor import Supervisor, TERMINAL_STATES, worker_command as default_worker_command
 
 
@@ -72,6 +74,18 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
     def environments():
         return [r for r in app.state.catalog.snapshot().resources if r.kind == 'environment']
 
+    @app.get('/catalog/schema')
+    def catalog_schema():
+        return {'api_revision': 2, 'experiment_request': ExperimentRequest.model_json_schema(),
+                'scenario': ScenarioDefinition.model_json_schema(), 'run_request': RunRequest.model_json_schema()}
+
+    @app.get('/catalog/networks')
+    def networks():
+        from muse_sdk.network import NetworkSelection
+        descriptor = app.state.catalog.builtins.descriptor
+        return {'radio_models': descriptor.radio_models, 'sensing_models': descriptor.sensing_models,
+                'scenario_network': NetworkSelection.model_json_schema()}
+
     @app.get('/catalog/training-packages')
     def training_packages():
         return [r for r in app.state.catalog.snapshot().resources if r.kind == 'training_package']
@@ -119,6 +133,10 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
     @app.post('/experiments/validate')
     def validate_experiment(request: dict):
         return resolve_experiment(request, app.state.catalog.snapshot())
+
+    @app.post('/experiments/inspect')
+    def inspect_draft(request: dict):
+        return inspect_experiment(request, app.state.catalog.snapshot())
 
     @app.post('/experiments', status_code=201)
     def save_experiment(request: dict):
