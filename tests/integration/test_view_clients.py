@@ -66,6 +66,12 @@ def test_pick_and_entities_follow_frame_identity(display_run):
                 kind='selection', object_id=current['objects'][0]['object_id'], frame=current['frame'])))
             picked = next(e for e in session.client_events(client['view_id']) if e['kind'] == 'selection')
             assert picked['frame'] == current['frame']
+            # Viewer网络传输可落后同episode若干tick；选择保留其真实渲染帧，不冒称当前实体帧。
+            rendered = {**current['frame'], 'decision': max(0, current['frame']['decision'] - 1),
+                        'tick': max(0, current['frame']['tick'] - 20)}
+            session._viewer_event(dict(kind='view', view_id=client['view_id'], event=dict(
+                kind='selection', object_id=current['objects'][0]['object_id'], frame=rendered)))
+            assert next(e for e in session.client_events(client['view_id']) if e['kind'] == 'selection')['frame'] == rendered
     finally:
         os.kill(pid, signal.SIGCONT)
         sender.close()

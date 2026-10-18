@@ -294,7 +294,11 @@ class DisplaySession:
             if view_id in self._view_ids:
                 event = dict(message['event'])
                 if event['kind'] == 'selection':
-                    if self._entity_snapshot is None or event['frame'] != self._entity_snapshot['frame']:
+                    if self._entity_snapshot is None or event['frame'] is None:
+                        return
+                    current = self._entity_snapshot['frame']
+                    if any(event['frame'][key] != current[key] for key in (
+                            'run_id', 'world_id', 'selection_seq', 'scene_hash', 'episode')):
                         return
                 event['view_id'] = view_id
                 # 选择与配对均为当前状态；每类只保留最新，慢客户端不会积压。
