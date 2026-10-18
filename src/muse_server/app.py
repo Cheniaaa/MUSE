@@ -2,11 +2,14 @@
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -20,7 +23,8 @@ from .catalog import API_REVISION, Catalog
 from .resolver import resolve_experiment
 from .inspection import inspect_experiment
 from .run_data import read_log_page, read_metric_page
-from .supervisor import Supervisor, TERMINAL_STATES, worker_command as default_worker_command
+from .storage import write_json_new
+from .supervisor import Supervisor, TERMINAL_STATES, process_identity, worker_command as default_worker_command
 
 
 PageOffset = Annotated[int, Query(ge=0)]
@@ -73,7 +77,7 @@ def bootstrap(data_dir, controller_path=None):
 
 
 def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=default_worker_command,
-               access_host='127.0.0.1', viewer_port=8080):
+               access_host='127.0.0.1', viewer_port=8080, server_address=None):
     limits = timeouts or RunTimeouts()
 
     @asynccontextmanager
@@ -82,11 +86,23 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         supervisor = Supervisor(catalog, worker_command=worker_command, access_host=access_host, viewer_port=viewer_port)
         app.state.catalog = catalog
         app.state.supervisor = supervisor
+        app.state.instance_id = uuid4().hex
         supervisor.start()
+        instance_path = catalog.directory / 'server-instance.json'
+        published = False
         try:
+            instance = dict(instance_id=app.state.instance_id, pid=os.getpid(), process_start=process_identity(os.getpid()),
+                            address=server_address, state='running', shutdown_timeout=limits.cancel + limits.stop + 5.)
+            # 目录锁已取得；替换崩溃遗留身份，status只会看到完整旧记录或完整新记录。
+            with tempfile.TemporaryDirectory(dir=catalog.directory) as temporary:
+                path = Path(temporary) / 'instance.json'
+                write_json_new(path, json.dumps(instance))
+                path.replace(instance_path)
+                published = True
             yield
         finally:
-            await asyncio.to_thread(supervisor.close)
+            # 删除身份必须在清理完成之后、目录锁释放之前，避免删掉下一实例的文件。
+            await asyncio.to_thread(supervisor.close, before_unlock=instance_path.unlink if published else None)
 
     app = FastAPI(title='Muse M1', lifespan=lifespan)
 
@@ -106,7 +122,8 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
                             content={'status': 'error' if error else 'ok', 'error': error,
                                      'gpu_busy': app.state.supervisor.gpu_busy,
                                      'api_revision': API_REVISION, 'catalog_id': app.state.catalog.catalog_id,
-                                     'platform_revision': app.state.catalog.builtins.platform_revision})
+                                     'platform_revision': app.state.catalog.builtins.platform_revision,
+                                     'instance_id': app.state.instance_id})
 
     @app.get('/catalog/environments')
     def environments(offset: PageOffset = 0, limit: PageLimit = 50):
@@ -346,7 +363,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
     return app
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8000)
@@ -356,11 +373,12 @@ def main():
     parser.add_argument('--viewer-port', type=int, default=8080)
     for name, field in RunTimeouts.model_fields.items():
         parser.add_argument('--' + name.replace('_', '-') + '-seconds', type=float, default=field.default)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     limits = RunTimeouts(**{name: getattr(args, name + '_seconds') for name in RunTimeouts.model_fields})
     import uvicorn
     uvicorn.run(create_app(args.data_dir, controller_path=args.controller, timeouts=limits,
-                          access_host=args.access_host, viewer_port=args.viewer_port),
+                          access_host=args.access_host, viewer_port=args.viewer_port,
+                          server_address=f'http://{args.access_host}:{args.port}'),
                 host=args.host, port=args.port)
 
 

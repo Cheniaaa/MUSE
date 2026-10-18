@@ -527,7 +527,7 @@ class Supervisor:
             self._fatal = repr(exc)
             # 不释放锁和GPU占位；故障必须显式可见。
 
-    def close(self):
+    def close(self, *, before_unlock=None):
         with self._lock:
             if self._thread is None:
                 return
@@ -541,6 +541,8 @@ class Supervisor:
         self._selector.close()
         for session in self._displays.values():
             session.close()
+        if before_unlock is not None:
+            before_unlock()
         fcntl.flock(self._lock_file, fcntl.LOCK_UN)
         self._lock_file.close()
         self._thread = None
