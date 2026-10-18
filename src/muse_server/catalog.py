@@ -6,14 +6,17 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from uuid import uuid4
+import zipfile
 
 from muse_sdk.config import ConfigError
 from muse_sdk.geometry import GeometryAssetSummary
 from muse_sdk.descriptor import parse_descriptor_json
 from muse_sdk.run_protocol import CheckpointArtifact, CheckpointReference, RunTimeouts
+from muse_sdk.scene_edit import EnvironmentEdit, EnvironmentManifest
 from muse_sdk.experiment import (
-    BuiltinMetadata, CatalogSnapshot, EnvironmentBundle, ExperimentDefinition, ResourceRecord, RunPlan,
+    BuiltinMetadata, CatalogSnapshot, EnvironmentBundle, ExperimentDefinition, ResourceRecord, ResourceRef, RunPlan,
     learning_contract,
 )
 
@@ -68,7 +71,8 @@ class Catalog:
     def _connect(self):
         return sqlite3.connect(self.database)
 
-    def register_archive(self, kind: str, archive: Path, *, resource_id: str | None = None) -> ResourceRecord:
+    def register_archive(self, kind: str, archive: Path, *, resource_id: str | None = None,
+                         derived_from: ResourceRef | None = None) -> ResourceRecord:
         if kind not in ('environment', 'training_package'):
             raise ConfigError('kind', 'Unsupported upload kind')
         with self._connect() as db:
@@ -118,6 +122,8 @@ class Catalog:
                     metadata['geometry_summary'] = GeometryAssetSummary.model_validate(
                         inspected['geometry_summary']).model_dump(mode='json')
                     digest = inspected['sha256']
+                if derived_from is not None:
+                    metadata['derived_from'] = derived_from.model_dump(mode='json')
                 record = ResourceRecord(resource_id=resource_id, revision=revision, sha256=digest,
                                         kind=kind, path=str(content), metadata=metadata)
                 db.execute('INSERT INTO resources VALUES (?, ?, ?, ?)',
@@ -126,6 +132,47 @@ class Catalog:
                 shutil.rmtree(root)
                 raise
         return record
+
+    def get_resource(self, kind: str, resource_id: str, revision: int) -> ResourceRecord:
+        with self._connect() as db:
+            row = db.execute('SELECT record FROM resources WHERE kind=? AND id=? AND revision=?',
+                             (kind, resource_id, revision)).fetchone()
+        if row is None:
+            raise ConfigError(kind, 'Unknown resource revision')
+        return ResourceRecord.model_validate_json(row[0])
+
+    def environment_editing(self, resource_id: str, revision: int) -> EnvironmentManifest:
+        record = self.get_resource('environment', resource_id, revision)
+        with tempfile.TemporaryDirectory(dir=self.directory) as temporary:
+            root = Path(temporary)
+            source, output = root / 'reference.json', root / 'manifest.json'
+            source.write_text(record.model_dump_json(include={'resource_id', 'revision', 'sha256'}))
+            result = subprocess.run([sys.executable, '-m', 'muse_runtime.environment_edit', 'inspect',
+                '--root', record.path, '--input', str(source), '--output', str(output)], capture_output=True, text=True)
+            if result.returncode:
+                raise ConfigError('environment', result.stderr)
+            return EnvironmentManifest.model_validate_json(output.read_text())
+
+    def derive_environment(self, edit: EnvironmentEdit) -> ResourceRecord:
+        record = self.get_resource('environment', edit.base.resource_id, edit.base.revision)
+        if record.sha256 != edit.base.sha256:
+            raise ConfigError('base.sha256', 'Environment content identity does not match the registered revision')
+        with tempfile.TemporaryDirectory(dir=self.directory) as temporary:
+            root = Path(temporary)
+            source, output = root / 'edit.json', root / 'result.json'
+            source.write_text(edit.model_dump_json())
+            result = subprocess.run([sys.executable, '-m', 'muse_runtime.environment_edit', 'derive',
+                '--root', record.path, '--input', str(source), '--destination', str(root / 'content'),
+                '--output', str(output)], capture_output=True, text=True)
+            if result.returncode:
+                raise ConfigError('environment_edit', result.stderr)
+            content = Path(json.loads(output.read_text())['destination'])
+            path = root / 'derived.zip'
+            with zipfile.ZipFile(path, 'w') as archive:
+                for asset in sorted(content.rglob('*')):
+                    if asset.is_file():
+                        archive.write(asset, asset.relative_to(content))
+            return self.register_archive('environment', path, derived_from=edit.base)
 
     def snapshot(self) -> CatalogSnapshot:
         with self._connect() as db:

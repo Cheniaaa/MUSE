@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from muse_sdk.config import ConfigError
 from muse_sdk.experiment import ExperimentRequest, ScenarioDefinition
+from muse_sdk.scene_edit import EnvironmentEdit
 from muse_sdk.run_protocol import DisplayPatch, InteractiveCommand, RunRequest, RunTimeouts
 
 from .catalog import API_REVISION, Catalog
@@ -89,7 +90,16 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
     @app.get('/catalog/schema')
     def catalog_schema():
         return {'api_revision': API_REVISION, 'experiment_request': ExperimentRequest.model_json_schema(),
-                'scenario': ScenarioDefinition.model_json_schema(), 'run_request': RunRequest.model_json_schema()}
+                'scenario': ScenarioDefinition.model_json_schema(), 'run_request': RunRequest.model_json_schema(),
+                'environment_edit': EnvironmentEdit.model_json_schema()}
+
+    @app.get('/catalog/environments/{resource_id}/{revision}/editing')
+    def environment_editing(resource_id: str, revision: int):
+        return app.state.catalog.environment_editing(resource_id, revision)
+
+    @app.post('/catalog/environments/derive', status_code=201)
+    def derive_environment(edit: EnvironmentEdit):
+        return app.state.catalog.derive_environment(edit)
 
     @app.get('/catalog/networks')
     def networks(offset: PageOffset = 0, limit: PageLimit = 50):
