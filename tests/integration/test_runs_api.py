@@ -124,7 +124,7 @@ def test_real_api_registration_resolution_run_events_and_artifacts(client):
         assert event['payload']['state'] == 'COMPLETED'
     result = client.get(f'/runs/{run_id}').json()
     assert result['exit_code'] == 0
-    assert client.get('/runs').json()[0]['run_id'] == run_id
+    assert client.get('/runs').json()['items'][0]['run_id'] == run_id
     artifacts = client.get(f'/runs/{run_id}/artifacts').json()
     log = next(a for a in artifacts if a['kind'] == 'log')
     response = client.get(f"/runs/{run_id}/artifacts/{log['id']}")

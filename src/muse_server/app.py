@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -19,16 +19,41 @@ from muse_sdk.run_protocol import DisplayPatch, InteractiveCommand, RunRequest, 
 from .catalog import API_REVISION, Catalog
 from .resolver import resolve_experiment
 from .inspection import inspect_experiment
+from .run_data import read_log_page, read_metric_page
 from .supervisor import Supervisor, TERMINAL_STATES, worker_command as default_worker_command
 
 
 PageOffset = Annotated[int, Query(ge=0)]
 PageLimit = Annotated[int, Query(ge=1, le=200)]
+LogChannel = Literal['worker', 'viser']
 
 
 def _catalog_page(items, offset, limit):
     return {'items': items[offset:offset + limit],
             'next_offset': offset + limit if offset + limit < len(items) else None}
+
+
+def _run_log_page(supervisor, run_id, channel, offset, limit, *, follow=False):
+    record = supervisor.get_run(run_id)
+    terminal = record['state'] in TERMINAL_STATES
+    started = record['pid'] is not None if channel == 'worker' else record['viser_log_started']
+    if not started:
+        return dict(data_base64='', next_offset=0 if offset is None else offset, eof=True,
+                    availability='not_started', terminal=terminal)
+    directory = Path(record['artifact_directory'])
+    gap = None
+    if follow:
+        size = (directory / 'logs' / f'{channel}.log').stat().st_size
+        if offset is None:
+            offset = size
+        elif size - offset > 262144:
+            gap = dict(previous_offset=offset, next_offset=size - 262144)
+            offset = gap['next_offset']
+    page = read_log_page(directory, channel=channel, offset=offset, limit=limit)
+    page['terminal'] = terminal
+    if gap is not None:
+        page['gap'] = gap
+    return page
 
 
 def bootstrap(data_dir, controller_path=None):
@@ -200,12 +225,29 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         return app.state.supervisor.submit(plan)
 
     @app.get('/runs')
-    def list_runs():
-        return app.state.supervisor.list_runs()
+    def list_runs(experiment_id: str | None = None, mode: Literal['TRAIN', 'EVALUATE', 'INTERACTIVE'] | None = None,
+                  state: Literal['QUEUED', 'PREPARING', 'COMPILING', 'RUNNING', 'STOP_REQUESTED', 'STOPPING',
+                                 'COMPLETED', 'CANCELLED', 'FAILED', 'LOST'] | None = None,
+                  offset: PageOffset = 0, limit: PageLimit = 50):
+        return app.state.supervisor.list_runs(experiment_id=experiment_id, mode=mode, state=state,
+                                             offset=offset, limit=limit)
 
     @app.get('/runs/{run_id}')
     def get_run(run_id: str):
         return app.state.supervisor.get_run(run_id)
+
+    @app.get('/runs/{run_id}/metrics')
+    def metrics(run_id: str, offset: PageOffset = 0, limit: Annotated[int, Query(ge=1, le=2000)] = 500):
+        record = app.state.supervisor.get_run(run_id)
+        terminal = record['state'] in TERMINAL_STATES
+        if record['pid'] is None:
+            return dict(records=[], next_offset=offset, eof=True, terminal=terminal, availability='not_started')
+        return read_metric_page(Path(record['artifact_directory']), offset=offset, limit=limit, terminal=terminal)
+
+    @app.get('/runs/{run_id}/logs')
+    def logs(run_id: str, channel: LogChannel = 'worker', offset: PageOffset = 0,
+             limit: Annotated[int, Query(ge=1, le=262144)] = 65536):
+        return _run_log_page(app.state.supervisor, run_id, channel, offset, limit)
 
     @app.post('/runs/{run_id}/cancel')
     def cancel(run_id: str):
@@ -244,6 +286,34 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         if artifact['run'] != run_id or not path.is_relative_to(root) or not path.is_file():
             raise HTTPException(404, 'Artifact unavailable or outside run directory')
         return FileResponse(path, filename=path.name)
+
+    @app.websocket('/streams/runs/{run_id}/logs')
+    async def log_stream(websocket: WebSocket, run_id: str, channel: LogChannel = 'worker'):
+        supervisor = app.state.supervisor
+        try:
+            supervisor.get_run(run_id)
+        except KeyError:
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        offset = None
+        try:
+            while True:
+                # 只取快照时短暂持锁；文件读取和慢网络发送均在锁外。
+                page = await asyncio.to_thread(_run_log_page, supervisor, run_id, channel, offset, 65536, follow=True)
+                await websocket.send_json(page)
+                offset = page['next_offset']
+                if page['terminal'] and page['eof']:
+                    await websocket.close()
+                    return
+                try:
+                    message = await asyncio.wait_for(websocket.receive(), timeout=.1)
+                    if message['type'] == 'websocket.disconnect':
+                        return
+                except asyncio.TimeoutError:
+                    pass
+        except WebSocketDisconnect:
+            return
 
     @app.websocket('/streams/runs/{run_id}/events')
     async def events(websocket: WebSocket, run_id: str):

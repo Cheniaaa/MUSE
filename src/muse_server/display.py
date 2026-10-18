@@ -14,9 +14,11 @@ from muse_sdk.run_protocol import (DisplayPatch, DisplaySettings, PreviewApplied
 
 
 class DisplaySession:
-    def __init__(self, plan, send_control, *, access_host='127.0.0.1', viewer_port=8080, send_command):
+    def __init__(self, plan, send_control, *, access_host='127.0.0.1', viewer_port=8080, send_command,
+                 on_log_started):
         self.plan, self.send_control = plan, send_control
         self.send_command = send_command
+        self.on_log_started = on_log_started
         self.interaction = {'command': None, 'result': None}
         self.access_host, self.viewer_port = access_host, viewer_port
         self.requested = DisplaySettings(enabled=False, world_id=plan.experiment.preview.world_ids[0],
@@ -125,6 +127,7 @@ class DisplaySession:
             check_preview_capacity(parent, self.model.nbody)
             directory = Path(self.plan.artifact_directory)
             log = (directory / 'logs/viser.log').open('ab', buffering=0)
+            self.on_log_started()
             command = [sys.executable, '-m', 'muse_server.viewers.viser_process',
                 '--snapshot-fd', str(child.fileno()), '--model', str(directory / self.model.path),
                 '--sha256', self.model.sha256, '--nbody', str(self.model.nbody),

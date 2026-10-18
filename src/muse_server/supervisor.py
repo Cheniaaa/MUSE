@@ -61,7 +61,8 @@ class Supervisor:
     def _display(self, run_id):
         if run_id not in self._displays:
             session = DisplaySession(self.get_plan(run_id), self.send_control,
-                access_host=self.access_host, viewer_port=self.viewer_port, send_command=self.viewer_command)
+                access_host=self.access_host, viewer_port=self.viewer_port, send_command=self.viewer_command,
+                on_log_started=self._viewer_log_started)
             session.set_interaction(self.get_run(run_id)['interaction'])
             self._displays[run_id] = session
             if self.get_run(run_id)['state'] in TERMINAL_STATES:
@@ -75,6 +76,12 @@ class Supervisor:
     def patch_display(self, run_id, patch):
         with self._lock:
             return self._display(run_id).patch(patch)
+
+    def _viewer_log_started(self):
+        # 显示只在活动Worker期间启动；写入者通知真实打开事实，重启后仍可辨别缺失日志。
+        record = self._active['record']
+        record['viser_log_started'] = True
+        self._save(record)
 
     def _connect(self):
         return sqlite3.connect(self.database)
@@ -92,7 +99,9 @@ class Supervisor:
                 raise RuntimeError('Another supervisor owns this data directory') from exc
             with self._connect() as db:
                 db.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
-            for record in self.list_runs():
+            with self._connect() as db:
+                records = [json.loads(row[0]) for row in db.execute('SELECT record FROM runs ORDER BY rowid')]
+            for record in records:
                 if record['state'] not in TERMINAL_STATES | {'QUEUED'}:
                     record['state'] = 'LOST'
                     record['failure'] = 'Server restarted; no Worker takeover'
@@ -131,9 +140,18 @@ class Supervisor:
                 raise KeyError(run_id)
             return json.loads(row[0])
 
-    def list_runs(self):
+    def list_runs(self, *, experiment_id=None, mode=None, state=None, offset=0, limit=50):
+        filters, values = [], []
+        for field, value in (('experiment_id', experiment_id), ('mode', mode), ('state', state)):
+            if value is not None:
+                filters.append(f"json_extract(record,'$.{field}')=?")
+                values.append(value)
+        where = ' WHERE ' + ' AND '.join(filters) if filters else ''
         with self._lock, self._connect() as db:
-            return [json.loads(row[0]) for row in db.execute('SELECT record FROM runs ORDER BY rowid')]
+            rows = db.execute('SELECT record FROM runs' + where + ' ORDER BY rowid LIMIT ? OFFSET ?',
+                              (*values, limit + 1, offset)).fetchall()
+        return {'items': [json.loads(row[0]) for row in rows[:limit]],
+                'next_offset': offset + limit if len(rows) > limit else None}
 
     def get_plan(self, run_id):
         record = self.get_run(run_id)
@@ -144,6 +162,9 @@ class Supervisor:
             if self._closing or self._fatal or self._thread is None:
                 raise RuntimeError('Supervisor is not accepting runs')
             record = dict(run_id=plan.run_id, experiment_id=plan.experiment_id, state='QUEUED',
+                          mode=plan.mode, max_decision_steps=plan.max_decision_steps,
+                          checkpoint=plan.checkpoint.model_dump(mode='json') if plan.checkpoint else None,
+                          viser_log_started=False,
                           device=plan.device, pid=None, pgid=None, process_start=None,
                           plan_path=str(Path(plan.artifact_directory) / 'resolved_run_plan.json'),
                           artifact_directory=plan.artifact_directory, created_at=time.time(),
@@ -422,9 +443,9 @@ class Supervisor:
         self._reap_lost()
         if self._active is None:
             if not self._lost and not self._closing:
-                queued = next((r for r in self.list_runs() if r['state'] == 'QUEUED'), None)
-                if queued is not None:
-                    self._spawn(queued)
+                queued = self.list_runs(state='QUEUED', limit=1)['items']
+                if queued:
+                    self._spawn(queued[0])
             return
         self._drain()
         active = self._active
@@ -483,6 +504,7 @@ class Supervisor:
     def _index_artifacts(self, record):
         directory = Path(record['artifact_directory'])
         for relative, kind in (('resolved_run_plan.json', 'run_plan'), ('logs/worker.log', 'log'),
+                                ('logs/viser.log', 'viser_log'),
                                ('events.jsonl', 'events'), ('metrics.jsonl', 'metrics')):
             path = directory / relative
             if path.is_file():
