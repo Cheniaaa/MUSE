@@ -80,7 +80,7 @@ def test_preview_export_failure_isolated_but_gpu_copy_error_propagates(flight_en
     events = []
     original = module.export_model
     try:
-        def broken_export(*args):
+        def broken_export(*args, **kwargs):
             raise OSError('export denied')
         monkeypatch.setattr(module, 'export_model', broken_export)
         preview = module.WorkerPreview('r', env, tmp_path, sender, lambda *args: events.append(args))
