@@ -31,7 +31,7 @@ for line in sys.stdin:
         if revision == 2:
             while (root / 'hold-second').exists(): time.sleep(.01)
         print(json.dumps(dict(kind='ready', revision=revision, viewer_url='http://127.0.0.1:1234',
-                              objects=[], sensor_omissions=[])), flush=True)
+                              objects=[])), flush=True)
     elif message['kind'] == 'intent':
         print(json.dumps(dict(kind='view', event=message['intent'])), flush=True)
 '''
@@ -47,12 +47,18 @@ def test_latest_revision_wins_and_disconnect_closes(pipeline, tmp_path):
         manager.attach(identity)
         wait_for(lambda: (tmp_path / 'pid').exists())
         pid = int((tmp_path / 'pid').read_text())
-        manager.update(identity, draft_request(pipeline, 2))
-        manager.update(identity, draft_request(pipeline, 3))
+        second = draft_request(pipeline, 2)
+        second['entities'][0]['sensor_profile_id'] = 'none'
+        manager.update(identity, second)
+        third = draft_request(pipeline, 3)
+        third['entities'][0].update(sensor_profile_id='cf2_imu_rangefinder_down',
+                                    sensor_config={'imu_update_rate_hz': 100.})
+        manager.update(identity, third)
         (tmp_path / 'release').touch()
         wait_for(lambda: manager.get(identity)['status'] == 'ready')
         state = manager.get(identity)
         assert state['applied_revision'] == 3
+        assert state['sensor_omissions'] == ['scout: missing rangefinder_update_rate_hz']
         assert (tmp_path / 'revisions').read_text().splitlines() == ['1', '3']
         assert not any(event.get('status') == 'ready' and event.get('applied_revision') == 1
                        for event in manager.events(identity))
@@ -133,7 +139,7 @@ def test_preview_rejects_forged_resource_or_client_paths(pipeline):
     manager.shutdown()
 
 
-def test_incomplete_research_can_preview_geometry_and_control_ws_cleans(pipeline):
+def test_public_sensor_omissions_follow_profile_and_applied_revision_and_ws_cleans(pipeline):
     from fastapi.testclient import TestClient
     from muse_server.app import create_app
     from muse_server.supervisor import process_identity
@@ -147,10 +153,33 @@ def test_incomplete_research_can_preview_geometry_and_control_ws_cleans(pipeline
                 assert state.get('status') != 'error', state
                 state = ws.receive_json()
             assert state['applied_revision'] == 1 and state['viewer_url'].startswith('http://127.0.0.1:')
-            assert 'scout' in state['sensor_omissions']
+            assert state['sensor_omissions'] == ['scout']
             scout = next(obj for obj in state['objects'] if obj['object_id'] == 'scout')
             assert 'body_id' not in scout and 'geom_ids' not in scout
             assert scout['model_id'] == 'bitcraze_crazyflie_2'
+            for revision, profile, config, omissions in (
+                (2, 'cf2_imu_rangefinder_down', {},
+                 ['scout: missing imu_update_rate_hz, rangefinder_update_rate_hz']),
+                (3, 'cf2_imu_rangefinder_down', {'imu_update_rate_hz': 100.},
+                 ['scout: missing rangefinder_update_rate_hz']),
+                (4, 'none', {}, []),
+                (5, 'cf2_imu_rangefinder_down',
+                 {'imu_update_rate_hz': 100., 'rangefinder_update_rate_hz': 20.}, []),
+                (6, None, {}, ['scout']),
+            ):
+                request = draft_request(pipeline, revision)
+                request['entities'][0].update(sensor_profile_id=profile, sensor_config=config)
+                response = client.put('/previews/' + identity, json=request)
+                assert response.status_code == 200, response.text
+                while True:
+                    state = ws.receive_json()
+                    assert state.get('status') != 'error', state
+                    if state.get('status') == 'ready' and state['applied_revision'] == revision:
+                        break
+                assert state['sensor_omissions'] == omissions
+                public = client.get('/previews/' + identity).json()
+                assert public['applied_revision'] == revision
+                assert public['sensor_omissions'] == omissions
             assert client.get('/runs').json()['items'] == []
         wait_for(lambda: client.get('/previews/' + identity).status_code == 404)
         assert client.get('/health').json()['gpu_busy'] is False

@@ -45,19 +45,44 @@ def test_final_three_vehicle_model_snapshot_mapping_and_disabled(flight_env, tmp
                 [np.sin(yaw),np.cos(yaw),0],[0,0,1]], atol=1e-6)
         assert torch.equal(original, env.sim.data.qpos)
         import viser
-        from muse_server.viewers.viser_process import create_scene
+        from muse_server.viewers.scene_interaction import SceneInteraction
         server = viser.ViserServer(host='127.0.0.1', port=0, verbose=False)
+        interaction = None
         try:
-            scene = create_scene(server, model)
-            scene.update_from_arrays(pos, mat)
-            visible_bodies = set()
-            for group in scene._mesh_groups:
-                if group.handle.visible:
-                    visible_bodies.update(group.body_ids)
-                    np.testing.assert_allclose(group.handle.batched_positions, pos[0, group.body_ids])
-            assert visible_bodies == set(model.jnt_bodyid)
-            np.testing.assert_array_equal(scene.fixed_bodies_frame.position, [0., 0., 0.])
+            interaction = SceneInteraction(server, model, preview.model.objects, emit=lambda _: None)
+            interaction.update_frame(pos[0], mat[0], header.model_dump(mode='json'))
+            rendered_geoms, entity_bodies, fixed_geoms, mesh_geoms = set(), set(), set(), set()
+            for index, obj in enumerate(preview.model.objects):
+                if obj.kind == 'entity':
+                    entity_bodies.add(obj.body_id)
+                for geom in obj.geom_ids:
+                    rendered_geoms.add(geom)
+                    handle = server.scene.get_handle_by_name(f'/muse/objects/{index}/geoms/{geom}')
+                    assert handle is not None and handle.visible
+                    body = model.geom_bodyid[geom]
+                    np.testing.assert_allclose(handle.position, pos[0, body], atol=1e-6)
+                    rotation = np.empty(9)
+                    mujoco.mju_quat2Mat(rotation, handle.wxyz)
+                    np.testing.assert_allclose(rotation.reshape(3, 3), mat[0, body], atol=1e-6)
+                    if body == 0:
+                        fixed_geoms.add(geom)
+                        np.testing.assert_array_equal(handle.position, [0., 0., 0.])
+                    if model.geom_type[geom] == mujoco.mjtGeom.mjGEOM_MESH:
+                        mesh_geoms.add(geom)
+                        mesh = model.geom_dataid[geom]
+                        start, count = model.mesh_vertadr[mesh], model.mesh_vertnum[mesh]
+                        local_rotation = np.empty(9)
+                        mujoco.mju_quat2Mat(local_rotation, model.geom_quat[geom])
+                        expected = model.mesh_vert[start:start + count] @ local_rotation.reshape(3, 3).T + model.geom_pos[geom]
+                        actual = interaction._meshes[geom].vertices
+                        np.testing.assert_allclose(actual.min(0), expected.min(0), atol=1e-6)
+                        np.testing.assert_allclose(actual.max(0), expected.max(0), atol=1e-6)
+            assert rendered_geoms == set(range(model.ngeom))
+            assert entity_bodies == set(model.jnt_bodyid)
+            assert fixed_geoms and mesh_geoms
         finally:
+            if interaction is not None:
+                interaction.close()
             server.stop()
         assert events[-1][0] == 'preview_applied'
         preview.apply(WorkerControl(run_id='r', kind='preview', selection_seq=2,

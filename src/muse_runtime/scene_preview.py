@@ -57,8 +57,7 @@ def compile_preview(request: dict, resource_paths: dict, destination: Path) -> d
             'objects': [obj.model_dump(mode='json') for obj in objects],
             'applied_revision': request['revision'],
             'editable': [obj.object_id for obj in manifest.objects if obj.editable] +
-                        [entity.object_id for entity in entities],
-            'sensor_omissions': [entity.object_id for entity in entities if not entity.sensor_outputs]}
+                        [entity.object_id for entity in entities]}
 
 
 def main():

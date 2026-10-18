@@ -77,7 +77,6 @@ def test_incomplete_research_can_preview_geometry(preview_inputs, tmp_path):
     objects = [SceneObject.model_validate(obj) for obj in result['objects']]
     assert {obj.object_id for obj in objects if obj.kind == 'entity'} == {'drone', 'anchor-0', 'anchor-1'}
     assert all(obj.role_id is None for obj in objects)
-    assert result['sensor_omissions'] == ['drone', 'anchor-0', 'anchor-1']
     assert {key: hash_package(Path(path)) for key, path in paths.items()} == hashes
 
 
@@ -146,7 +145,6 @@ def test_resolved_rangefinder_installs_but_omission_does_not_invent_one(preview_
     sensor = model.sensor('scout_group_0/rangefinder_down')
     assert sensor.type[0] == mujoco.mjtSensor.mjSENS_RANGEFINDER
     assert model.site('scout_group_0/rangefinder_down').pos.tolist() == [0., 0., -.01]
-    assert result['sensor_omissions'] == ['anchor-0', 'anchor-1']
     omitted = compile_preview(source, paths, tmp_path / 'without-sensor')
     model = mujoco.MjModel.from_binary_path(omitted['model_path'])
     assert 'scout_group_0/rangefinder_down' not in [model.sensor(i).name for i in range(model.nsensor)]
@@ -211,7 +209,6 @@ def test_environment_without_any_entities_can_preview(preview_inputs, tmp_path):
     request = {**source, 'entities': []}
     result = compile_preview(request, paths, tmp_path / 'compiled')
     assert all(obj['kind'] == 'environment' for obj in result['objects'])
-    assert result['sensor_omissions'] == []
 
 
 def test_real_frozen_run_plan_still_compiles_through_shared_cpu_path(pipeline):

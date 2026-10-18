@@ -12,32 +12,6 @@ import time
 from muse_sdk.run_protocol import drain_preview
 
 
-def create_scene(server, model):
-    import numpy as np
-    from mjviser import ViserMujocoScene
-    scene = ViserMujocoScene(server, model, num_envs=1)
-    scene.camera_tracking_enabled = False
-    # 相机按动态实体范围取景，地面尺寸不应把微型无人机缩成像素点。
-    positions = scene.mj_data.xpos[np.unique(model.jnt_bodyid)]
-    center = (positions.min(0) + positions.max(0)) / 2 if len(positions) else np.zeros(3)
-    radius = max(float(np.linalg.norm(positions - center, axis=-1).max()) + .2, .4) if len(positions) else 1.
-    direction = np.array([1., -.12, .32])
-    direction /= np.linalg.norm(direction)
-    fov = np.radians(50.)
-    distance = radius / np.sin(fov / 2)
-    server.initial_camera.position = center + direction * distance
-    server.initial_camera.look_at = center
-    server.initial_camera.up = (0., 0., 1.)
-    server.initial_camera.fov = fov
-
-    @server.on_client_connect
-    def frame_entities(client):
-        client.camera.position = center + direction * distance * max(1., 1. / client.camera.aspect)
-        client.camera.look_at = center
-        client.camera.fov = fov
-    return scene
-
-
 def load_model(path, sha256, nbody):
     import mujoco
     with Path(path).open('rb') as stream:

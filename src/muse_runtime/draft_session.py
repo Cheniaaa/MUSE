@@ -74,7 +74,7 @@ def main():
             server, interaction = candidate_server, candidate_interaction
             emit({'kind': 'ready', 'revision': result['applied_revision'],
                 'viewer_url': f'http://{server.get_host()}:{server.get_port()}',
-                'objects': result['objects'], 'sensor_omissions': result['sensor_omissions']})
+                'objects': result['objects']})
         return 0
     finally:
         if interaction is not None:
