@@ -214,8 +214,11 @@ class PreviewManager:
         value = ViewIntent.model_validate(intent)
         with self._lock:
             session = self._sessions[identity]
-            if not session.attached or session.state['status'] != 'ready':
+            if not session.attached:
                 raise ConfigError('session_id', 'Preview control is not ready')
+            if session.state['status'] != 'ready':
+                # HTTP编译可先于旧WS意图到达；返回当前状态，不把旧意图重放到新图。
+                return deepcopy(session.state)
             self._send(session, {'kind': 'intent', 'intent': value.model_dump(mode='json')})
 
     def events(self, identity):

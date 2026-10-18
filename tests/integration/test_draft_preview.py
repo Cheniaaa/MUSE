@@ -28,6 +28,8 @@ for line in sys.stdin:
         with (root / 'revisions').open('a') as f: f.write(str(revision) + '\\n')
         if revision == 1:
             while not (root / 'release').exists(): time.sleep(.01)
+        if revision == 2:
+            while (root / 'hold-second').exists(): time.sleep(.01)
         print(json.dumps(dict(kind='ready', revision=revision, viewer_url='http://127.0.0.1:1234',
                               objects=[], sensor_omissions=[])), flush=True)
     elif message['kind'] == 'intent':
@@ -76,6 +78,40 @@ def test_unattached_preview_expires(pipeline, tmp_path):
             manager.get(identity)
     finally:
         manager.shutdown()
+
+
+def test_view_intent_overtaken_by_http_compile_returns_current_state(pipeline, tmp_path):
+    from fastapi.testclient import TestClient
+    from muse_server.app import create_app
+    from muse_server.previews import PreviewManager
+    (tmp_path / 'release').touch()
+    (tmp_path / 'hold-second').touch()
+    app = create_app(pipeline[0].directory, viewer_port=0)
+    with TestClient(app) as client:
+        app.state.previews = PreviewManager(app.state.catalog,
+            process_command=lambda identity: [sys.executable, '-c', CHILD, str(tmp_path)])
+        identity = client.post('/previews', json=draft_request(pipeline)).json()['session_id']
+        with client.websocket_connect('/streams/previews/' + identity) as ws:
+            state = ws.receive_json()
+            while state.get('status') != 'ready':
+                state = ws.receive_json()
+            assert client.put('/previews/' + identity, json=draft_request(pipeline, 2)).json()['status'] == 'preparing'
+            state = ws.receive_json()
+            assert state['kind'] == 'state' and state['status'] == 'preparing'
+            # ready时发出的意图被另一个HTTP通道的编译超越，仍需返回真实状态而非虚构编译失败。
+            ws.send_json({'kind': 'reset_camera'})
+            response = ws.receive_json()
+            assert response['kind'] == 'state' and response['status'] == 'preparing'
+            ws.send_json({'kind': 'invalid'})
+            assert ws.receive_json()['kind'] == 'error'
+            (tmp_path / 'hold-second').unlink()
+            state = ws.receive_json()
+            while state.get('status') != 'ready':
+                assert state['kind'] == 'state'
+                state = ws.receive_json()
+            assert state['applied_revision'] == 2
+            ws.send_json({'kind': 'reset_camera'})
+            assert ws.receive_json()['kind'] == 'view'
 
 
 def test_preview_rejects_forged_resource_or_client_paths(pipeline):

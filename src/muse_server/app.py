@@ -189,7 +189,9 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
                 try:
                     intent = await asyncio.wait_for(websocket.receive_json(), timeout=.05)
                     try:
-                        previews.view_intent(session_id, intent)
+                        current = previews.view_intent(session_id, intent)
+                        if current is not None:
+                            await websocket.send_json({'kind': 'state', **current})
                     except ValueError as exc:
                         await websocket.send_json({'kind': 'error', 'message': str(exc)})
                 except asyncio.TimeoutError:
