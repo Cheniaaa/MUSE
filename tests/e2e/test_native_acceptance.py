@@ -32,7 +32,14 @@ def test_native_acceptance(case):
     EVIDENCE.mkdir(exist_ok=True)
     report_path = EVIDENCE / 'report.json'
     report = json.loads(report_path.read_text()) if report_path.exists() else {'cases': {}}
-    assert case not in report['cases'], 'This case was already attempted; no implicit retry'
+    attempt = int(os.environ.get('MUSE_NATIVE_ATTEMPT', '1'))
+    previous = report['cases'].get(case)
+    history = report.get('failed_attempts', {}).get(case, [])
+    assert attempt == (len(history) + 2 if previous else 1), 'Select the next authorized attempt explicitly'
+    if previous:
+        assert not previous.get('invariants_passed'), 'Do not repeat successful cases'
+        report.setdefault('failed_attempts', {}).setdefault(case, []).append(previous)
+    evidence_prefix = case if attempt == 1 else f'{case}-attempt{attempt}'
     if case != 'headless':
         assert 'experiment_id' in report, 'Use the Experiment registered by the authorized headless case'
     if case == 'interactive':
@@ -44,11 +51,12 @@ def test_native_acceptance(case):
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
     row = report['cases'][case] = {'started_at': time.time(), 'state': 'preparing_test',
+                                  'attempt': attempt, 'evidence_prefix': evidence_prefix,
                                   'base_url': f'http://127.0.0.1:{port}'}
     save()
     server = None
     run_id = None
-    with (EVIDENCE / f'{case}-server.log').open('xb') as log:
+    with (EVIDENCE / f'{evidence_prefix}-server.log').open('xb') as log:
         try:
             server = subprocess.Popen([sys.executable, '-m', 'muse_server.app', '--port', str(port),
                 '--viewer-port', '0', '--data-dir', str(EVIDENCE / 'catalog')], stdout=log, stderr=log)
@@ -98,7 +106,7 @@ def test_native_acceptance(case):
                 configured = False
                 ready_at = {}
                 next_resources = 0.
-                with (EVIDENCE / f'{case}-samples.jsonl').open('x') as samples:
+                with (EVIDENCE / f'{evidence_prefix}-samples.jsonl').open('x') as samples:
                     while True:
                         observed = time.time()
                         run = response_json(client.get(f'/runs/{run_id}'))
@@ -162,7 +170,7 @@ def test_native_acceptance(case):
                     assert [value['steps'] for value in metrics if value['source'] == 'update'] == list(range(16, 513, 16))
                 assert set(ready_at) == set(enabled)
                 if case != 'interactive':
-                    observed_samples = [json.loads(line) for line in (EVIDENCE / f'{case}-samples.jsonl').read_text().splitlines()]
+                    observed_samples = [json.loads(line) for line in (EVIDENCE / f'{evidence_prefix}-samples.jsonl').read_text().splitlines()]
                     start = max(ready_at.values()) if enabled else next(
                         value['time'] for value in observed_samples if value['run']['state'] == 'RUNNING')
                     first = next((value for value in observed_samples if value['time'] >= start + 10.), None)

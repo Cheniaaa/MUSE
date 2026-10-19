@@ -62,6 +62,7 @@ class DisplaySession:
         self.worker_socket = None
         self.retired = []
         self.ack_timeout = 10.
+        self.worker_running_at = None
         self.released = False
         self._view_ids = set()
         self._view_events = {}
@@ -179,7 +180,9 @@ class DisplaySession:
         return self.snapshot()
 
     def worker_event(self, kind, payload):
-        if kind == 'preview_model':
+        if kind == 'running':
+            self.worker_running_at = time.monotonic()
+        elif kind == 'preview_model':
             model = PreviewModel.model_validate(payload)
             root = Path(self.plan.artifact_directory).resolve()
             path = (root / model.path).resolve()
@@ -426,7 +429,9 @@ class DisplaySession:
                 slot.pending = send_preview(slot.viewer_socket, slot.pending)
                 if not slot.loaded and time.monotonic() - slot.launch_at > 30:
                     self._viewer_failed(slot, f'{slot.name.title()} model load timeout')
-            if slot.sent.selection_seq > slot.effective_seq and time.monotonic() - slot.request_at > self.ack_timeout:
+            # 准备/编译期限归Supervisor；ACK只能从Worker可消费控制后开始计时。
+            if (self.worker_running_at is not None and slot.sent.selection_seq > slot.effective_seq
+                    and time.monotonic() - max(slot.request_at, self.worker_running_at) > self.ack_timeout):
                 if slot.error != 'preview_applied timeout' and slot.viewer_error is None:
                     slot.status, slot.error = 'error', 'preview_applied timeout'
                     self._state_to_viewer(slot)

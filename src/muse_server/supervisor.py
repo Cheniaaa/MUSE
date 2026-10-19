@@ -407,6 +407,8 @@ class Supervisor:
             if not record['cancel_requested'] and active['stop_at'] is None:
                 record['state'] = event.kind.upper()
                 active['phase_at'] = time.monotonic()
+            if event.kind == 'running':
+                self._display(event.run_id).worker_event(event.kind, event.payload)
         elif event.kind == 'heartbeat':
             record['heartbeat'] = event.wall_time
             active['heartbeat_at'] = time.monotonic()

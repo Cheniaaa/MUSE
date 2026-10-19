@@ -46,7 +46,7 @@ while True:
 
 
 @pytest.fixture
-def native_transport(display_run, monkeypatch):
+def native_process_boundary(monkeypatch):
     from muse_server import display
     spawn = display.subprocess.Popen
     def start(command, **kwargs):
@@ -54,7 +54,71 @@ def native_transport(display_run, monkeypatch):
             command = [sys.executable, '-u', '-c', NATIVE_TRANSPORT, *command[3:]]
         return spawn(command, **kwargs)
     monkeypatch.setattr(display.subprocess, 'Popen', start)
+
+
+@pytest.fixture
+def native_transport(display_run, native_process_boundary):
     return display_run
+
+
+@pytest.mark.parametrize('late_ack', [False, True])
+def test_display_ack_deadline_starts_at_worker_running(tmp_path, native_process_boundary, monkeypatch, late_ack):
+    """模型/窗口先ready仍不能计编译期ACK；running才起表，迟ACK仍超时并可恢复。"""
+    from types import SimpleNamespace
+    from muse_server import display
+    from muse_server.supervisor import Supervisor
+    from test_display_session import DISPLAY_CHILD
+    from test_supervisor import make_plan
+
+    now = [100.]
+    monkeypatch.setattr(display, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    catalog, plan = make_plan(tmp_path)
+    directory = Path(plan.artifact_directory)
+    child = DISPLAY_CHILD.replace('model = mujoco.MjModel',
+        "p.emit('preparing')\np.emit('compiling')\nmodel = mujoco.MjModel")
+    child = child.replace("p.emit('running')", '''
+while not (Path(plan.artifact_directory) / 'allow-running').exists() and p.read_control() != 'cancel':
+    p.emit('heartbeat')
+    time.sleep(.01)
+p.emit('running')
+while not (Path(plan.artifact_directory) / 'allow-ack').exists() and p.read_control() != 'cancel':
+    p.emit('heartbeat')
+    time.sleep(.01)
+''')
+    command = lambda p: [sys.executable, '-c', child, str(Path(p.artifact_directory) / 'resolved_run_plan.json')]
+    with Supervisor(catalog, worker_command=command) as supervisor:
+        supervisor.submit(plan)
+        wait_for(lambda: supervisor.get_run(plan.run_id)['pid'])
+        for viewer in ('viser', 'native'):
+            supervisor.patch_display(plan.run_id, {viewer: {'enabled': True, 'world_id': 1, 'rate_hz': 17.}})
+        session = supervisor._displays[plan.run_id]
+        session.ack_timeout = 1.
+        wait_for(lambda: all(slot.loaded for slot in session.slots.values()))
+        assert supervisor.get_run(plan.run_id)['state'] == 'COMPILING'
+        assert supervisor.get_run(plan.run_id)['heartbeat'] is not None
+        with supervisor._lock:
+            now[0] = 111.
+            session.tick()
+            assert all(supervisor.get_display(plan.run_id)[name]['status'] == 'pending'
+                       for name in ('viser', 'native'))
+        (directory / 'allow-running').touch()
+        wait_for(lambda: supervisor.get_run(plan.run_id)['state'] == 'RUNNING')
+        with supervisor._lock:
+            now[0] = 111.1
+            session.tick()
+            assert all(supervisor.get_display(plan.run_id)[name]['status'] == 'pending'
+                       for name in ('viser', 'native'))
+        if late_ack:
+            with supervisor._lock:
+                now[0] = 112.1
+                session.tick()
+                assert all(supervisor.get_display(plan.run_id)[name]['error'] == 'preview_applied timeout'
+                           for name in ('viser', 'native'))
+        (directory / 'allow-ack').touch()
+        for viewer in ('viser', 'native'):
+            slot = ready(supervisor, plan.run_id, viewer)
+            assert slot['effective'] == {'enabled': True, 'world_id': 1, 'rate_hz': 17.}
+            assert slot['error'] is None and slot['frame']['viewer'] == viewer
 
 
 def ready(supervisor, run_id, viewer):
