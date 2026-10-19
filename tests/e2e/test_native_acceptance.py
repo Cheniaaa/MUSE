@@ -1,4 +1,4 @@
-"""M5.1逐次授权工程验收：每次只创建一个有界Run，证据保存在独立Catalog。"""
+"""M5.1官方Native工程验收：每次只创建一个有界Run，独立保留本期证据。"""
 import hashlib
 import json
 import os
@@ -16,8 +16,8 @@ from test_basic_flight import archive, response_json, TERMINAL
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = ROOT / '.planning/mjlab-spike/m5-native-acceptance'
-CASES = ('headless', 'viser', 'native', 'dual', 'interactive')
+EVIDENCE = ROOT / '.planning/mjlab-spike/m5-official-native-acceptance'
+CASES = ('native', 'dual', 'interactive')
 SELECTED = os.environ.get('MUSE_NATIVE_CASE')
 if SELECTED is not None and SELECTED not in CASES:
     raise pytest.UsageError('MUSE_NATIVE_CASE must name one of: ' + ', '.join(CASES))
@@ -27,7 +27,7 @@ if SELECTED is not None and SELECTED not in CASES:
 def test_native_acceptance(case):
     if os.environ.get('MUSE_TEST_GPU') != '1' or SELECTED != case:
         pytest.skip('Requires explicit MUSE_TEST_GPU=1 and this authorized MUSE_NATIVE_CASE')
-    if case != 'headless' and os.environ.get('MUSE_TEST_NATIVE') != '1':
+    if os.environ.get('MUSE_TEST_NATIVE') != '1':
         pytest.skip('Display acceptance requires explicit desktop validation')
     EVIDENCE.mkdir(exist_ok=True)
     report_path = EVIDENCE / 'report.json'
@@ -40,8 +40,8 @@ def test_native_acceptance(case):
         assert not previous.get('invariants_passed'), 'Do not repeat successful cases'
         report.setdefault('failed_attempts', {}).setdefault(case, []).append(previous)
     evidence_prefix = case if attempt == 1 else f'{case}-attempt{attempt}'
-    if case != 'headless':
-        assert 'experiment_id' in report, 'Use the Experiment registered by the authorized headless case'
+    if case != 'native':
+        assert 'experiment_id' in report, 'Use the Experiment registered by the authorized Native case'
     if case == 'interactive':
         assert report['cases']['dual']['state'] == 'COMPLETED'
         assert report['cases']['dual']['checkpoint_artifact_id']
@@ -73,7 +73,7 @@ def test_native_acceptance(case):
                         pass
                     assert time.monotonic() < startup, 'Server startup timeout'
                     time.sleep(.1)
-                if case == 'headless':
+                if case == 'native':
                     example = ROOT / 'examples/basic_flight'
                     env = response_json(client.post('/catalog/environments', content=archive(example / 'environment'),
                         headers={'Content-Type': 'application/zip'}), 201)
@@ -101,8 +101,7 @@ def test_native_acceptance(case):
                 row['submitted_at'] = time.time()
                 save()
                 deadline = time.monotonic() + (300 if case == 'interactive' else 600)
-                enabled = {'headless': (), 'viser': ('viser',), 'native': ('native',),
-                           'dual': ('viser', 'native'), 'interactive': ('viser', 'native')}[case]
+                enabled = ('native',) if case == 'native' else ('viser', 'native')
                 configured = False
                 ready_at = {}
                 next_resources = 0.
@@ -171,8 +170,7 @@ def test_native_acceptance(case):
                 assert set(ready_at) == set(enabled)
                 if case != 'interactive':
                     observed_samples = [json.loads(line) for line in (EVIDENCE / f'{evidence_prefix}-samples.jsonl').read_text().splitlines()]
-                    start = max(ready_at.values()) if enabled else next(
-                        value['time'] for value in observed_samples if value['run']['state'] == 'RUNNING')
+                    start = max(ready_at.values())
                     first = next((value for value in observed_samples if value['time'] >= start + 10.), None)
                     last = next((value for value in observed_samples if value['time'] >= start + 30.), None)
                     if first is not None and last is not None:
@@ -195,7 +193,7 @@ def test_native_acceptance(case):
                     row['checkpoint_artifact_id'] = checkpoints[-1]['id']
                 row['invariants_passed'] = True
                 # 桌面截图、真实WebEngine连接、CPU/显存和稳态区间由同次现场记录补充，不伪造自动通过。
-                row['desktop_evidence'] = 'not applicable' if case == 'headless' else 'pending independent observation'
+                row['desktop_evidence'] = 'pending independent observation'
                 save()
         except BaseException as exc:
             row['test_error'] = repr(exc)
