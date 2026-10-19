@@ -5,6 +5,7 @@ import subprocess
 import signal
 import sqlite3
 import sys
+import threading
 import time
 
 import pytest
@@ -269,6 +270,73 @@ def test_reused_pid_is_not_signalled_or_gpu_blocked(tmp_path):
     finally:
         other.terminate()
         other.wait()
+
+
+@pytest.mark.parametrize('identity_fault', ['unreadable', 'missing_start'])
+def test_unconfirmed_worker_identity_blocks_queue_without_signalling(tmp_path, monkeypatch, identity_fault):
+    from muse_server.supervisor import Supervisor, process_identity
+
+    catalog, plan = make_plan(tmp_path, stop=.1)
+    with Supervisor(catalog, worker_command=command('success')) as previous:
+        previous.submit(plan)
+        wait_for(lambda: previous.get_run(plan.run_id)['state'] == 'COMPLETED')
+    other = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+    supervisor = Supervisor(catalog, worker_command=command('success'))
+    observed = threading.Event()
+    reads, signals = [], []
+    original_read, original_killpg = Path.read_text, os.killpg
+    try:
+        identity = process_identity(other.pid)
+        assert identity is not None
+        with sqlite3.connect(catalog.database) as db:
+            record = json.loads(db.execute('SELECT record FROM runs WHERE id=?', (plan.run_id,)).fetchone()[0])
+            record.update(state='RUNNING', pid=other.pid, pgid=other.pid,
+                          process_start=None if identity_fault == 'missing_start' else identity)
+            db.execute('UPDATE runs SET record=? WHERE id=?', (json.dumps(record), plan.run_id))
+        queued = catalog.create_run_plan(plan.experiment_id, mode='EVALUATE', device='cuda:0', max_decision_steps=1)
+
+        def identity_read(path, *args, **kwargs):
+            if path == Path(f'/proc/{other.pid}/stat'):
+                reads.append(path)
+                if len(reads) >= 2:
+                    observed.set()
+                if identity_fault == 'unreadable':
+                    raise PermissionError('identity read denied for test')
+            return original_read(path, *args, **kwargs)
+
+        def signal_group(pgid, sig):
+            signals.append((pgid, sig))
+            return original_killpg(pgid, sig)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, 'read_text', identity_read)
+            patch.setattr(os, 'killpg', signal_group)
+            # 排队请求在第一次身份检查之前已被接收；监督线程本身保持生产实现。
+            with supervisor._lock:
+                supervisor.start()
+                supervisor.submit(queued)
+            assert observed.wait(5)
+            if identity_fault == 'unreadable':
+                wait_for(lambda: supervisor.error)
+                assert 'identity read denied for test' in supervisor.error
+                with pytest.raises(RuntimeError, match='shutdown unconfirmed'):
+                    supervisor.close()
+            else:
+                assert supervisor.error is None
+            assert supervisor.get_run(plan.run_id)['state'] == 'LOST'
+            pending = supervisor.get_run(queued.run_id)
+            assert pending['state'] == 'QUEUED' and pending['pid'] is None
+            assert supervisor.gpu_busy and other.poll() is None
+            assert signals == []
+            with pytest.raises(RuntimeError, match='Another supervisor'):
+                Supervisor(catalog).start()
+    finally:
+        # 结束自有测试进程后才释放测试故意保留的fatal/目录锁；不增加生产恢复入口。
+        if other.poll() is None:
+            other.terminate()
+        other.wait(timeout=5)
+        supervisor._fatal = None
+        supervisor.close()
 
 
 def test_startup_timeout_and_spawn_error_have_terminal(tmp_path):
