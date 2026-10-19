@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 from muse_sdk.run_protocol import (DisplaySettings, PreviewSelection, PreviewFrame, PreviewModel,
-    SceneObject, check_preview_capacity, encode_preview, send_preview)
+    SceneObject, native_state_layout, encode_preview, send_preview)
 
 
 def scene_objects(experiment, scene, model) -> list[SceneObject]:
@@ -50,7 +50,10 @@ def export_model(model, directory, *, objects: list[SceneObject]):
     mujoco.mj_saveModel(model, filename=str(path))
     with path.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-    metadata = PreviewModel(path=path.name, sha256=digest, nbody=model.nbody, objects=objects)
+    layout = native_state_layout(nq=model.nq, nv=model.nv, na=model.na, nu=model.nu,
+        nbody=model.nbody, nmocap=model.nmocap, neq=model.neq, nsensordata=model.nsensordata)
+    metadata = PreviewModel(path=path.name, sha256=digest, nbody=model.nbody,
+                           native_payload_floats=sum(size for _, size in layout), objects=objects)
     (Path(directory) / 'preview_objects.json').write_text(json.dumps(
         [obj.model_dump(mode='json') for obj in metadata.objects], ensure_ascii=False, allow_nan=False),
         encoding='utf-8')
@@ -61,6 +64,9 @@ class WorkerPreview:
     def __init__(self, run_id, env, directory, sock, emit):
         import torch
         self.run_id, self.env, self.sock, self.emit = run_id, env, sock, emit
+        model = env.sim.mj_model
+        self.native_layout = native_state_layout(nq=model.nq, nv=model.nv, na=model.na, nu=model.nu,
+            nbody=model.nbody, nmocap=model.nmocap, neq=model.neq, nsensordata=model.nsensordata)
         self.model = None
         self.selections = {name: PreviewSelection(selection_seq=0,
             display=DisplaySettings(enabled=False, world_id=env.experiment.preview.world_ids[0],
@@ -72,7 +78,6 @@ class WorkerPreview:
         self.error = None
         # 仅 CPU 模型导出失败可隔离；GPU 访问和同步不在此异常边界内。
         try:
-            check_preview_capacity(sock, env.sim.mj_model.nbody)
             objects = scene_objects(env.experiment, env.scene, env.sim.mj_model)
             self.model = export_model(env.sim.mj_model, directory, objects=objects)
         except Exception as exc:
@@ -129,19 +134,19 @@ class WorkerPreview:
         if due:
             import torch
             torch.cuda.current_stream(self.env.device).synchronize()
-            samples = {}
-            for world in {selection.display.world_id for selection in due.values()}:
-                pos = self.env.sim.data.xpos[world:world+1].detach().cpu().numpy().astype('<f4', copy=False)
-                mat = self.env.sim.data.xmat[world:world+1].detach().cpu().numpy().astype('<f4', copy=False)
-                samples[world] = (pos.tobytes() + mat.tobytes(), int(self.episodes[world].item()),
-                                  int(self.env.episode_length_buf[world].item()))
             for name, selection in due.items():
                 world = selection.display.world_id
-                arrays, episode, decision = samples[world]
+                fields = ('xpos', 'xmat') if name == 'viser' else (
+                    field for field, size in self.native_layout if size)
+                arrays = b''.join(getattr(self.env.sim.data, field)[world:world+1]
+                    .detach().cpu().numpy().astype('<f4', copy=False).tobytes() for field in fields)
+                episode = int(self.episodes[world].item())
+                decision = int(self.env.episode_length_buf[world].item())
                 tick = decision * self.env.cfg.decimation
                 header = PreviewFrame(viewer=name, run_id=self.run_id, world_id=world,
                     selection_seq=selection.selection_seq, episode=episode, decision=decision, tick=tick,
-                    sim_time=tick * self.env.physics_dt, scene_hash=self.model.sha256, nbody=self.model.nbody)
+                    sim_time=tick * self.env.physics_dt, scene_hash=self.model.sha256,
+                    nbody=self.model.nbody, payload_floats=len(arrays) // 4)
                 self.pending[name] = encode_preview(header, arrays)
                 self.next_sample[name] = now + 1. / selection.display.rate_hz
         try:

@@ -29,6 +29,10 @@ signal.signal(signal.SIGTERM, stop)
 emit({'kind': 'loaded'})
 state = None
 while True:
+    message = root / 'native-message.json'
+    if message.exists():
+        emit(json.loads(message.read_text()))
+        message.unlink()
     if (root / 'native-close').exists():
         emit({'kind': 'closed'})
         stop()
@@ -124,6 +128,104 @@ while not (Path(plan.artifact_directory) / 'allow-ack').exists() and p.read_cont
 def ready(supervisor, run_id, viewer):
     return wait_for(lambda: (slot if (slot := supervisor.get_display(run_id)[viewer])['status'] == 'ready'
                             else None), timeout=15)
+
+
+def test_native_capacity_rejection_keeps_viser_and_worker(native_transport):
+    from muse_sdk.run_protocol import PREVIEW_CAPACITY
+    supervisor, plan = native_transport
+    run_id = plan.run_id
+    supervisor.patch_display(run_id, {'viser': {'enabled': True}})
+    before = ready(supervisor, run_id, 'viser')
+    session = supervisor._displays[run_id]
+    with supervisor._lock:
+        session.model = session.model.model_copy(update={'native_payload_floats': PREVIEW_CAPACITY})
+        result = supervisor.patch_display(run_id, {'native': {'enabled': True}})
+        assert result['native']['status'] == 'error'
+        assert not result['native']['requested']['enabled']
+        assert session.slots['native'].process is None
+        assert not session.slots['native'].sent.display.enabled
+        for key in ('requested', 'effective', 'selection_seq', 'effective_seq', 'viewer_url'):
+            assert result['viser'][key] == before[key]
+    heartbeat = supervisor.get_run(run_id)['heartbeat']
+    wait_for(lambda: supervisor.get_run(run_id)['heartbeat'] != heartbeat)
+    assert supervisor.get_run(run_id)['state'] == 'RUNNING'
+    supervisor.cancel(run_id)
+    wait_for(lambda: supervisor.get_run(run_id)['state'] == 'CANCELLED')
+
+
+@pytest.mark.parametrize('kind', ['command', 'patch', 'view'])
+def test_native_cannot_send_viser_commands(native_transport, kind):
+    supervisor, plan = native_transport
+    run_id = plan.run_id
+    supervisor.patch_display(run_id, {'viser': {'enabled': True}})
+    before = ready(supervisor, run_id, 'viser')
+    supervisor.patch_display(run_id, {'native': {'enabled': True}})
+    ready(supervisor, run_id, 'native')
+    view_id = supervisor.register_view_client(run_id)['view_id']
+    session = supervisor._displays[run_id]
+    commands = []
+    session.send_command = lambda *args: commands.append(args)
+    message = {'command': dict(kind='command', command='pause'),
+        'patch': dict(kind='patch', patch={'world_id': 1}),
+        'view': dict(kind='view', view_id=view_id, event={'kind': 'connected'})}[kind]
+    (Path(plan.artifact_directory) / 'native-message.json').write_text(json.dumps(message))
+    wait_for(lambda: (session.slots['native'].error or commands
+        or session.slots['viser'].requested.world_id != 0 or session._view_events[view_id]))
+    assert session.slots['native'].status == 'error'
+    assert commands == [] and session._view_events[view_id] == []
+    assert supervisor.get_display(run_id)['viser']['requested'] == before['requested']
+    assert supervisor.get_run(run_id)['state'] == 'RUNNING'
+
+
+def test_native_selection_waits_without_relabeling_old_frame(native_transport):
+    supervisor, plan = native_transport
+    run_id = plan.run_id
+    supervisor.patch_display(run_id, {'viser': {'enabled': True}})
+    ready(supervisor, run_id, 'viser')
+    supervisor.patch_display(run_id, {'native': {'enabled': True}})
+    before = ready(supervisor, run_id, 'native')
+    session = supervisor._displays[run_id]
+    with supervisor._lock:
+        entities = supervisor.entities(run_id)
+        request = supervisor.patch_display(run_id, {'native': {'world_id': 1}})['native']
+        assert request['status'] == 'pending' and request['frame'] is None
+        session._viewer_event(session.slots['native'], {'kind': 'frame', 'header': before['frame']})
+        assert supervisor.get_display(run_id)['native']['frame'] is None
+        assert supervisor.entities(run_id) == entities
+    after = ready(supervisor, run_id, 'native')
+    assert after['frame']['world_id'] == 1
+    assert after['frame']['selection_seq'] == request['selection_seq']
+
+
+def test_native_wrong_model_payload_only_fails_native(native_transport):
+    from muse_sdk.run_protocol import encode_preview, PreviewFrame, preview_socketpair
+    supervisor, plan = native_transport
+    run_id = plan.run_id
+    for name in ('viser', 'native'):
+        supervisor.patch_display(run_id, {name: {'enabled': True}})
+        ready(supervisor, run_id, name)
+    session = supervisor._displays[run_id]
+    sender, receiver = preview_socketpair()
+    try:
+        with supervisor._lock:
+            before = supervisor.get_display(run_id)['viser']
+            header = PreviewFrame.model_validate(session.slots['native'].visible.model_dump())
+            header = header.model_copy(update={'payload_floats': 1, 'episode': header.episode + 1})
+            sender.send(encode_preview(header, bytes(4)))
+            worker_socket = session.worker_socket
+            session.worker_socket = receiver
+            try:
+                session.tick()
+            finally:
+                session.worker_socket = worker_socket
+            result = supervisor.get_display(run_id)
+            assert result['native']['status'] == 'error' and session.model_error is None
+            for key in ('requested', 'effective', 'selection_seq', 'effective_seq', 'viewer_url'):
+                assert result['viser'][key] == before[key]
+        assert supervisor.get_run(run_id)['state'] == 'RUNNING'
+    finally:
+        sender.close()
+        receiver.close()
 
 
 def test_dual_display_patch_does_not_invalidate_other_viewer(native_transport):
@@ -248,7 +350,8 @@ def test_native_without_display_preserves_last_successful_settings(display_run, 
 
 
 @pytest.mark.skipif(os.environ.get('MUSE_TEST_NATIVE') != '1', reason='Explicit native process window validation')
-def test_native_process_renders_then_exits_on_eof(tmp_path):
+@pytest.mark.parametrize('exit_kind', ['eof', 'term', 'window', 'packet'])
+def test_official_native_process_syncs_and_exits(tmp_path, exit_kind):
     import select
     import subprocess
     import mujoco
@@ -261,7 +364,10 @@ def test_native_process_renders_then_exits_on_eof(tmp_path):
     data = mujoco.MjData(model)
     data.qpos[:3] = [1., 2., 3.]
     mujoco.mj_forward(model, data)
-    arrays = data.xpos.astype('<f4').tobytes() + data.xmat.astype('<f4').tobytes()
+    import numpy as np
+    arrays = np.concatenate([data.qpos, data.qvel, data.act, data.ctrl, data.qfrc_applied,
+        data.xfrc_applied.ravel(), data.mocap_pos.ravel(), data.mocap_quat.ravel(),
+        data.eq_active, data.sensordata]).astype('<f4').tobytes()
     sender, receiver = preview_socketpair()
     process = None
     with (tmp_path / 'native.log').open('wb') as log:
@@ -274,7 +380,6 @@ def test_native_process_renders_then_exits_on_eof(tmp_path):
             def message():
                 assert select.select([process.stdout], [], [], 15)[0], (tmp_path / 'native.log').read_text()
                 value = json.loads(process.stdout.readline())
-                assert value['kind'] != 'error', value
                 return value
             assert message()['kind'] == 'loaded'
             for seq, world in [(1, 0), (2, 1)]:
@@ -284,12 +389,30 @@ def test_native_process_renders_then_exits_on_eof(tmp_path):
                 process.stdin.write((json.dumps({'kind': 'state', 'state': state}) + '\n').encode())
                 process.stdin.flush()
                 header = PreviewFrame(viewer='native', run_id='native-window', selection_seq=seq,
-                    world_id=world, episode=1, decision=0, tick=0, sim_time=0., scene_hash=metadata.sha256, nbody=model.nbody)
+                    world_id=world, episode=1, decision=0, tick=0, sim_time=0., scene_hash=metadata.sha256,
+                    nbody=model.nbody, payload_floats=metadata.native_payload_floats)
                 sender.send(encode_preview(header, arrays))
                 ack = message()
                 assert ack == {'kind': 'frame', 'header': header.model_dump()}
-            process.stdin.close()
-            assert process.wait(timeout=10) == 0
+            assert not select.select([process.stdout], [], [], .15)[0], 'Repeated frame ACK without a new sample'
+            if exit_kind == 'eof':
+                process.stdin.close()
+            elif exit_kind == 'term':
+                process.terminate()
+            elif exit_kind == 'window':
+                from tests.native_ui_helpers import NativeUI
+                ui = NativeUI(process.pid)
+                try:
+                    ui.key(ord('q'), 0xffe3)
+                    assert message()['kind'] == 'closed'
+                finally:
+                    ui.close()
+            else:
+                sender.send(b'bad')
+                assert message()['kind'] == 'error'
+            assert process.wait(timeout=10) == (1 if exit_kind == 'packet' else 0)
+            assert process.stdout.read() == b''
+            assert b'glibc' not in (tmp_path / 'native.log').read_bytes()
         finally:
             sender.close()
             receiver.close()
@@ -297,4 +420,6 @@ def test_native_process_renders_then_exits_on_eof(tmp_path):
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=5)
+                if not process.stdin.closed:
+                    process.stdin.close()
                 process.stdout.close()

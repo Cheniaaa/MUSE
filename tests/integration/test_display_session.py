@@ -14,7 +14,7 @@ def frame(seq=1, world=0, episode=0, decision=1, nbody=2, viewer='viser'):
     from muse_sdk.run_protocol import PreviewFrame, encode_preview
     header = PreviewFrame(run_id='r', viewer=viewer, world_id=world, selection_seq=seq, episode=episode,
                           decision=decision, tick=decision * 20, sim_time=decision * .04,
-                          scene_hash='a' * 64, nbody=nbody)
+                          scene_hash='a' * 64, nbody=nbody, payload_floats=12 * nbody)
     arrays = np.concatenate((np.zeros(nbody * 3, dtype='<f4'),
                              np.tile(np.eye(3, dtype='<f4').ravel(), nbody)))
     return encode_preview(header, arrays.tobytes())
@@ -119,6 +119,7 @@ model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body name="probe"><f
 objects = [SceneObject(object_id='probe', label='Probe', kind='entity', group_id='probe', group_slot=0,
     role_id=None, model_id='probe', body_id=model.body('probe').id, geom_ids=[model.geom('box').id])]
 metadata = export_model(model, Path(plan.artifact_directory), objects=objects)
+data = mujoco.MjData(model)
 p.emit('preview_model', metadata.model_dump())
 p.emit('running')
 current = {}
@@ -143,10 +144,20 @@ while p.read_control() != 'cancel':
             continue
         header = PreviewFrame(run_id=plan.run_id, viewer=viewer, world_id=selection.display.world_id,
             selection_seq=selection.selection_seq, episode=decision//100, decision=decision%100,
-            tick=(decision%100)*20, sim_time=(decision%100)*.04, scene_hash=metadata.sha256, nbody=model.nbody)
+            tick=(decision%100)*20, sim_time=(decision%100)*.04, scene_hash=metadata.sha256, nbody=model.nbody,
+            payload_floats=model.nbody * 12 if viewer == 'viser' else metadata.native_payload_floats)
         pos = np.zeros((1,model.nbody,3),dtype='<f4'); pos[0,1] = [selection.display.world_id,0,1]
         mat = np.tile(np.eye(3,dtype='<f4'),(1,model.nbody,1,1))
-        pending[viewer] = send_preview(s, encode_preview(header, pos.tobytes()+mat.tobytes()))
+        if viewer == 'viser':
+            raw = pos.tobytes() + mat.tobytes()
+        else:
+            data.qpos[:3] = [selection.display.world_id, 0, 1]
+            data.time = header.sim_time
+            mujoco.mj_forward(model, data)
+            raw = np.concatenate([data.qpos, data.qvel, data.act, data.ctrl, data.qfrc_applied,
+                data.xfrc_applied.ravel(), data.mocap_pos.ravel(), data.mocap_quat.ravel(),
+                data.eq_active, data.sensordata]).astype('<f4').tobytes()
+        pending[viewer] = send_preview(s, encode_preview(header, raw))
     p.emit('heartbeat')
     time.sleep(.015)
 p.emit('terminal', {'state':'CANCELLED','steps':decision,'updates':0})
@@ -239,7 +250,7 @@ def test_model_hash_nbody_and_capacity_fail_explicitly(tmp_path):
     a, b = preview_socketpair()
     try:
         with pytest.raises(ValueError, match='capacity'):
-            check_preview_capacity(a, 100000)
+            check_preview_capacity(a, payload_floats=100000)
     finally:
         a.close()
         b.close()
@@ -342,6 +353,7 @@ def test_viewer_failure_remains_visible_after_late_ack(display_run):
     run_id = plan.run_id
     request = supervisor.patch_display(run_id, {'viser': {'enabled': True}})['viser']
     session = supervisor._displays[run_id]
+    wait_for(lambda: session.slots['viser'].loaded)
     session.slots['viser'].process.kill()
     wait_for(lambda: supervisor.get_display(run_id)['viser']['status'] == 'error')
     wait_for(lambda: supervisor.get_display(run_id)['viser']['effective_seq'] == request['selection_seq'])

@@ -80,7 +80,7 @@ def child_case(name, directory):
     def frame(seq=1, world=0):
         return PreviewFrame(viewer='native', run_id='official-test', selection_seq=seq,
             world_id=world, episode=1, decision=5, tick=10, sim_time=7.5,
-            scene_hash='a' * 64, nbody=model.nbody)
+            scene_hash='a' * 64, nbody=model.nbody, payload_floats=snapshot.payload_floats)
     def display_restored():
         for field in ('qpos', 'qvel', 'act', 'ctrl', 'qfrc_applied', 'xfrc_applied',
                       'mocap_pos', 'mocap_quat', 'eq_active', 'sensordata'):

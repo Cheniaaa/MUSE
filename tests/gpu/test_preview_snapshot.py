@@ -157,7 +157,6 @@ def test_episode_reset_zero_pairs_with_new_episode(flight_env, tmp_path):
 
 
 def test_dual_preview_same_world_copy_and_reset(flight_env, tmp_path, monkeypatch):
-    import time
     from muse_runtime.preview import WorkerPreview
     from muse_sdk.run_protocol import PreviewSelection, preview_socketpair, drain_preview
 
@@ -166,25 +165,13 @@ def test_dual_preview_same_world_copy_and_reset(flight_env, tmp_path, monkeypatc
     preview = WorkerPreview('dual', env, tmp_path, sender, lambda *_: None)
     control = preview_control('dual', 1, world=1)
     control.preview.native = PreviewSelection(selection_seq=2, display=control.preview.viser.display.model_copy())
-    copies = []
-    cpu = torch.Tensor.cpu
-    def measured_copy(tensor, *args, **kwargs):
-        started = time.perf_counter()
-        result = cpu(tensor, *args, **kwargs)
-        copies.append((tuple(tensor.shape), tensor.numel() * tensor.element_size(), time.perf_counter() - started))
-        return result
-    monkeypatch.setattr(torch.Tensor, 'cpu', measured_copy)
     try:
         preview.apply(control)
-        started = time.perf_counter()
-        preview.sample(force=True)
-        elapsed = time.perf_counter() - started
+        sample_without_mutation(preview, monkeypatch)
         frames = drain_preview(receiver, run_id='dual', selections=preview.selections, scene_hash=preview.model.sha256)
-        assert len(copies) == 2 and all(shape[0] == 1 for shape, _, _ in copies)
-        assert sum(size for _, size, _ in copies) == preview.model.nbody * 12 * 4
-        assert set(frames) == {'viser', 'native'} and frames['viser'][1] == frames['native'][1]
+        assert {name: len(raw) for name, (_, raw) in frames.items()} == {'viser': 192, 'native': 492}
+        assert_native_matches_gpu(env, frames['native'])
         assert [frames[name][0].selection_seq for name in ('viser', 'native')] == [1, 2]
-        print(f'dual same-world sample={elapsed:.6f}s copies={copies}')
         before = {name: frame[0].episode for name, frame in frames.items()}
         env.reset(torch.tensor([False, True], device=env.device))
         preview.after_reset(1)
@@ -196,15 +183,96 @@ def test_dual_preview_same_world_copy_and_reset(flight_env, tmp_path, monkeypatc
         control.preview.native.selection_seq += 1
         control.preview.native.display.world_id = 0
         preview.apply(control)
-        copies.clear()
-        preview.sample(force=True)
-        assert len(copies) == 4 and all(shape[0] == 1 for shape, _, _ in copies)
+        sample_without_mutation(preview, monkeypatch)
         frames = drain_preview(receiver, run_id='dual', selections=preview.selections, scene_hash=preview.model.sha256)
-        for name, world in [('viser', 1), ('native', 0)]:
-            header, raw = frames[name]
-            assert header.world_id == world
-            np.testing.assert_allclose(np.frombuffer(raw, dtype='<f4')[:header.nbody * 3],
-                                       env.sim.data.xpos[world:world+1].cpu().numpy().ravel())
+        assert frames['native'][0].world_id == 0 and frames['viser'][0].world_id == 1
+        assert_native_matches_gpu(env, frames['native'])
+        np.testing.assert_allclose(np.frombuffer(frames['viser'][1], dtype='<f4')[:12],
+                                   env.sim.data.xpos[1:2].cpu().numpy().ravel())
+        control.preview.native.selection_seq += 1
+        control.preview.native.display.enabled = False
+        preview.apply(control)
+        sample_without_mutation(preview, monkeypatch)
+    finally:
+        sender.close()
+        receiver.close()
+        env.reset(torch.ones(env.num_envs, dtype=torch.bool, device=env.device))
+
+
+NATIVE_FIELDS = ('qpos', 'qvel', 'act', 'ctrl', 'qfrc_applied', 'xfrc_applied',
+                 'mocap_pos', 'mocap_quat', 'eq_active', 'sensordata')
+
+
+def sample_without_mutation(preview, monkeypatch):
+    """只审计sample的实际搬运；不把测试参考值的CPU读取算入产品开销。"""
+    env = preview.env
+    qpos, ctrl, episodes = env.sim.data.qpos.clone(), env.sim.data.ctrl.clone(), preview.episodes.clone()
+    lengths = env.episode_length_buf.clone()
+    rng = torch.cuda.get_rng_state(env.device)
+    generators = {key: value.get_state() for key, value in env.rng._generators.items()}
+    expected = []
+    for name, selection in preview.selections.items():
+        if selection.display.enabled:
+            world = selection.display.world_id
+            for field in (('xpos', 'xmat') if name == 'viser' else NATIVE_FIELDS):
+                array = getattr(env.sim.data, field)[world:world+1]
+                if array.numel():
+                    expected.append(array.data_ptr())
+    copies = []
+    cpu = torch.Tensor.cpu
+    def measured_copy(tensor, *args, **kwargs):
+        copies.append((tensor.shape, tensor.data_ptr()))
+        return cpu(tensor, *args, **kwargs)
+    with monkeypatch.context() as audit:
+        audit.setattr(torch.Tensor, 'cpu', measured_copy)
+        preview.sample(force=True)
+    assert sorted(pointer for _, pointer in copies) == sorted(expected)
+    assert all(shape[0] == 1 for shape, _ in copies)
+    assert torch.equal(qpos, env.sim.data.qpos) and torch.equal(ctrl, env.sim.data.ctrl)
+    assert torch.equal(episodes, preview.episodes) and torch.equal(lengths, env.episode_length_buf)
+    assert torch.equal(rng, torch.cuda.get_rng_state(env.device))
+    assert set(generators) == set(env.rng._generators)
+    for key, state in generators.items():
+        assert torch.equal(state, env.rng._generators[key].get_state())
+
+
+def assert_native_matches_gpu(env, frame):
+    from muse_server.viewers.native_viewer import NativeSnapshot
+    header, raw = frame
+    world = header.world_id
+    expected = np.concatenate([getattr(env.sim.data, field)[world:world+1].cpu().numpy().ravel()
+                               for field in NATIVE_FIELDS]).astype('<f4')
+    np.testing.assert_array_equal(np.frombuffer(raw, dtype='<f4'), expected)
+    snapshot = NativeSnapshot(env.sim.mj_model)
+    snapshot.update(raw, sim_time=header.sim_time)
+    np.testing.assert_allclose(snapshot.data.geom_xpos, env.sim.data.geom_xpos[world].cpu().numpy(), atol=1e-5)
+    np.testing.assert_allclose(snapshot.data.site_xpos, env.sim.data.site_xpos[world].cpu().numpy(), atol=1e-5)
+    assert snapshot.data.time == header.sim_time
+
+
+def test_native_snapshot_samples_only_selected_world(flight_env, tmp_path, monkeypatch):
+    from muse_runtime.preview import WorkerPreview
+    from muse_sdk.run_protocol import PreviewSelection, preview_socketpair, drain_preview
+    env = flight_env
+    sender, receiver = preview_socketpair()
+    preview = WorkerPreview('native', env, tmp_path, sender, lambda *_: None)
+    control = preview_control('native', 1, enabled=False)
+    control.preview.native = PreviewSelection(selection_seq=1,
+        display=control.preview.viser.display.model_copy(update={'enabled': True, 'world_id': 1}))
+    try:
+        env.sim.data.qvel[1] = .12
+        env.sim.data.ctrl[1] = .2
+        env.sim.data.xfrc_applied[1, 1] = .03
+        env.sim.forward()
+        preview.apply(control)
+        sample_without_mutation(preview, monkeypatch)
+        frames = drain_preview(receiver, run_id='native', selections=preview.selections, scene_hash=preview.model.sha256)
+        assert set(frames) == {'native'} and frames['native'][0].world_id == 1
+        assert_native_matches_gpu(env, frames['native'])
+        control.preview.native.selection_seq += 1
+        control.preview.native.display.enabled = False
+        preview.apply(control)
+        sample_without_mutation(preview, monkeypatch)
     finally:
         sender.close()
         receiver.close()

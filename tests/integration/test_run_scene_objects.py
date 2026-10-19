@@ -189,6 +189,6 @@ def test_preview_model_import_orders_remain_valid():
                     ('view_protocol', 'experiment', 'run_protocol')]:
         script = '\n'.join(f'import muse_sdk.{module}' for module in modules)
         script += '\nfrom muse_sdk.run_protocol import PreviewModel\n'
-        script += "PreviewModel(path='preview.mjb', sha256='a'*64, nbody=1, objects=[])\n"
+        script += "PreviewModel(path='preview.mjb', sha256='a'*64, nbody=1, native_payload_floats=6, objects=[])\n"
         result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
         assert result.returncode == 0, result.stdout + result.stderr

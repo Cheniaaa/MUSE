@@ -219,7 +219,8 @@ def test_real_viewer_process_consumes_sidecar_routes_errors_and_filters_frames(t
             data.qpos[:3] = [x, 0., 1.]
             mujoco.mj_forward(model, data)
             header = PreviewFrame(run_id='run', viewer='viser', world_id=world, selection_seq=seq, episode=episode,
-                decision=decision, tick=decision * 20, sim_time=decision * .04, scene_hash=metadata.sha256, nbody=model.nbody)
+                decision=decision, tick=decision * 20, sim_time=decision * .04, scene_hash=metadata.sha256,
+                nbody=model.nbody, payload_floats=12 * model.nbody)
             arrays = data.xpos.astype('<f4').tobytes() + data.xmat.astype('<f4').tobytes()
             return header, encode_preview(header, arrays)
         try:

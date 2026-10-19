@@ -107,7 +107,7 @@ def test_environment_pose_projects_local_offset_in_same_frame(tmp_path):
         group_slot=None, role_id=None, model_id=None, body_id=0, geom_ids=[0],
         local_position=[1., 2., 3.], local_orientation_matrix=[1., 0., 0., 0., 1., 0., 0., 0., 1.])]
     header = PreviewFrame(run_id='r', viewer='viser', world_id=1, selection_seq=1, episode=2, decision=3,
-                          tick=60, sim_time=.12, scene_hash='a' * 64, nbody=1)
+                          tick=60, sim_time=.12, scene_hash='a' * 64, nbody=1, payload_floats=12)
     slot = session.slots['viser']
     slot.requested = slot.effective = slot.effective.model_copy(update={'enabled': True, 'world_id': 1})
     slot.selection_seq = slot.effective_seq = 1

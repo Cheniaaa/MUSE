@@ -9,6 +9,61 @@ from pydantic import ValidationError
 from muse_sdk import run_protocol as wire
 
 
+def test_preview_payload_lengths_are_viewer_specific():
+    for viewer, count in [('viser', 48), ('native', 123)]:
+        header = wire.PreviewFrame(viewer=viewer, run_id='run', selection_seq=1,
+            world_id=0, episode=0, decision=1, tick=2, sim_time=.02,
+            scene_hash='a' * 64, nbody=4, payload_floats=count)
+        restored, raw = wire.decode_preview(wire.encode_preview(header, bytes(count * 4)))
+        assert restored == header and len(raw) == count * 4
+        with pytest.raises(ValueError):
+            wire.encode_preview(header, raw[:-1])
+        with pytest.raises(ValueError):
+            wire.decode_preview(wire.encode_preview(header, raw)[:-1])
+        missing = header.model_dump(exclude={'payload_floats'})
+        with pytest.raises(ValidationError):
+            wire.PreviewFrame.model_validate(missing)
+
+
+def test_preview_rejects_oversize_and_invalid_viser_layout():
+    import struct
+    values = dict(viewer='native', run_id='run', selection_seq=1, world_id=0,
+        episode=0, decision=1, tick=2, sim_time=.02, scene_hash='a' * 64,
+        nbody=4, payload_floats=wire.PREVIEW_CAPACITY // 4)
+    header = wire.PreviewFrame(**values)
+    arrays = bytes(header.payload_floats * 4)
+    with pytest.raises(ValueError, match='capacity'):
+        wire.encode_preview(header, arrays)
+    metadata = header.model_dump_json().encode()
+    with pytest.raises(ValueError, match='capacity'):
+        wire.decode_preview(struct.pack('<I', len(metadata)) + metadata + arrays)
+    with pytest.raises(ValidationError):
+        wire.PreviewFrame(**{**values, 'viewer': 'viser', 'payload_floats': 47})
+
+
+def test_worker_model_export_does_not_reject_disabled_large_native(tmp_path):
+    import mujoco
+    from types import SimpleNamespace as NS
+    from muse_runtime.preview import WorkerPreview
+
+    # userdata并非payload；大量原生user sensor令Native超限，Viser仍只有一个body。
+    model = mujoco.MjModel.from_xml_string('<mujoco><sensor><user name="large" dim="40000"'
+                                         ' needstage="pos"/></sensor></mujoco>')
+    env = NS(num_envs=2, device='cpu', experiment=NS(preview=NS(world_ids=[0], rate_hz=10),
+        bindings={}, scenario=NS(entity_groups=[]), environment_metadata={}),
+        sim=NS(mj_model=model), scene=NS(spec=NS(geoms=[])))
+    sender, receiver = wire.preview_socketpair()
+    try:
+        preview = WorkerPreview('run', env, tmp_path, sender, lambda *_: None)
+        assert preview.error is None and preview.model.native_payload_floats == 40006
+        preview.sample(force=True)
+        with pytest.raises(BlockingIOError):
+            receiver.recv(128)
+    finally:
+        sender.close()
+        receiver.close()
+
+
 @pytest.mark.parametrize('patch', [{}, {'enabled': True}, {'native': None},
     {'viser': {}, 'native': {}}, {'native': {'enabled': None}},
     {'native': {'world_id': -1}}, {'native': {'rate_hz': 0}}, {'native': {'rate_hz': 31}}])
@@ -65,7 +120,7 @@ def test_drain_keeps_latest_per_viewer():
             ('viser', 3, 0, 2, 0), ('native', 2, 1, 2, 40)]:
             header = wire.PreviewFrame(viewer=name, run_id='run', selection_seq=seq,
                 world_id=world, episode=episode, decision=decision, tick=decision,
-                sim_time=decision * .01, scene_hash='a' * 64, nbody=1)
+                sim_time=decision * .01, scene_hash='a' * 64, nbody=1, payload_floats=12)
             sender.send(wire.encode_preview(header, bytes(48)))
         frames = wire.drain_preview(receiver, run_id='run', selections=selections, scene_hash='a' * 64)
         assert {name: (value[0].episode, value[0].decision) for name, value in frames.items()} == {
@@ -84,12 +139,15 @@ def test_worker_two_slots_bound_backlog_and_reset(monkeypatch, tmp_path):
 
     sender, receiver = wire.preview_socketpair()
     env = NS(num_envs=2, device='cpu', experiment=NS(preview=NS(world_ids=[0], rate_hz=10)),
-             sim=NS(mj_model=NS(nbody=1024), data=NS(xpos=torch.ones(2, 1024, 3),
-                 xmat=torch.ones(2, 1024, 9))), scene=None,
+             sim=NS(mj_model=NS(nbody=1024, nq=1, nv=1, na=0, nu=1, nmocap=0, neq=0, nsensordata=1),
+                 data=NS(xpos=torch.ones(2, 1024, 3), xmat=torch.ones(2, 1024, 9),
+                     qpos=torch.ones(2, 1), qvel=torch.ones(2, 1), ctrl=torch.ones(2, 1),
+                     qfrc_applied=torch.ones(2, 1), xfrc_applied=torch.ones(2, 1024, 6),
+                     sensordata=torch.ones(2, 1))), scene=None,
              episode_length_buf=torch.tensor([5, 8]), cfg=NS(decimation=2), physics_dt=.01)
     monkeypatch.setattr(module, 'scene_objects', lambda *_: [])
     monkeypatch.setattr(module, 'export_model', lambda *_, **__: wire.PreviewModel(
-        path='preview.mjb', sha256='a' * 64, nbody=1024, objects=[]))
+        path='preview.mjb', sha256='a' * 64, nbody=1024, native_payload_floats=6149, objects=[]))
     monkeypatch.setattr(torch.cuda, 'current_stream', lambda _: NS(synchronize=lambda: None))
     events = []
     try:

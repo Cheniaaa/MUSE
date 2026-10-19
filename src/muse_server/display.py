@@ -165,9 +165,11 @@ class DisplaySession:
             raise ValueError('Run display session has ended')
         seq = slot.selection_seq + 1
         selection = PreviewSelection(selection_seq=seq, display=settings)
-        # Native上下文成功之前不发布启用请求；仍经过Worker存活准入。
-        self._publish(slot, slot.sent if name == 'native' and settings.enabled and not slot.loaded else selection)
+        # 两槽均先完成模型容量/窗口准入再启用采样；此处仍经过Worker存活准入。
+        self._publish(slot, slot.sent if settings.enabled and not slot.loaded else selection)
         slot.requested, slot.selection_seq = settings, seq
+        if name == 'native':
+            slot.visible = None
         slot.status, slot.error = 'pending', None
         slot.viewer_error = None
         if not settings.enabled:
@@ -239,7 +241,8 @@ class DisplaySession:
         parent, child = preview_socketpair()
         log = None
         try:
-            check_preview_capacity(parent, self.model.nbody)
+            payload_floats = self.model.nbody * 12 if slot.name == 'viser' else self.model.native_payload_floats
+            check_preview_capacity(parent, payload_floats=payload_floats)
             directory = Path(self.plan.artifact_directory)
             log = (directory / f'logs/{slot.name}.log').open('ab', buffering=0)
             if slot.name == 'viser':
@@ -316,10 +319,11 @@ class DisplaySession:
                 if message['host'] != '127.0.0.1' or not 0 < message['port'] < 65536:
                     raise ValueError('Invalid Viser bind address')
                 slot.viewer_url = f'http://{self.access_host}:{message["port"]}'
-            else:
-                self._publish(slot, PreviewSelection(selection_seq=slot.selection_seq, display=slot.requested))
+            self._publish(slot, PreviewSelection(selection_seq=slot.selection_seq, display=slot.requested))
         elif kind == 'frame':
             header = PreviewFrame.model_validate(message['header'])
+            if slot.name == 'native' and (slot.selection_seq != slot.effective_seq or not slot.requested.enabled):
+                return
             if (header.viewer, header.run_id, header.selection_seq, header.world_id, header.scene_hash) != (
                     slot.name, self.plan.run_id, slot.effective_seq, slot.effective.world_id, self.model.sha256):
                 return
@@ -333,6 +337,8 @@ class DisplaySession:
                 slot.committed = slot.effective
             if previous == (slot.status, slot.error):
                 return
+        elif kind in ('patch', 'command', 'view') and slot.name != 'viser':
+            self._viewer_failed(slot, f'Native cannot send {kind} messages')
         elif kind == 'patch':
             try:
                 self.patch({'viser': message['patch']})
@@ -386,6 +392,9 @@ class DisplaySession:
                     scene_hash=self.model.sha256 if self.model else '')
                 for name, (header, arrays) in latest.items():
                     slot = self.slots[name]
+                    if name == 'native' and header.payload_floats != self.model.native_payload_floats:
+                        self._viewer_failed(slot, 'Native snapshot payload length differs from published model')
+                        continue
                     if slot.viewer_socket is None:
                         continue
                     key = header.episode, header.decision
