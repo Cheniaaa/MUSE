@@ -195,6 +195,15 @@ PREVIEW_CAPACITY = 128 * 1024
 PREVIEW_HEADER_CAPACITY = 4096
 
 
+def native_state_layout(*, nq: int, nv: int, na: int, nu: int, nbody: int,
+                        nmocap: int, neq: int, nsensordata: int) -> tuple[tuple[str, int], ...]:
+    """Native固定状态布局；尺寸来自本Run编译模型。"""
+    return (('qpos', nq), ('qvel', nv), ('act', na), ('ctrl', nu),
+            ('qfrc_applied', nv), ('xfrc_applied', 6 * nbody),
+            ('mocap_pos', 3 * nmocap), ('mocap_quat', 4 * nmocap),
+            ('eq_active', neq), ('sensordata', nsensordata))
+
+
 def preview_socketpair():
     pair = socket.socketpair(type=socket.SOCK_SEQPACKET)
     for sock in pair:
