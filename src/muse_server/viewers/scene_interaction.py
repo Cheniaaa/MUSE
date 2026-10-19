@@ -9,6 +9,7 @@ from mjviser.conversions import merge_geoms
 
 from muse_sdk.experiment import Pose
 from muse_sdk.view_protocol import EditGesture, SceneObject, ViewIntent
+from .scene_data import apply_body_poses, geom_rotations
 
 
 @dataclass
@@ -51,13 +52,12 @@ class SceneInteraction:
         self._names = {obj.object_id: f'/muse/objects/{index}' for index, obj in enumerate(objects)}
         self._geom_objects = {geom: obj.object_id for obj in objects for geom in obj.geom_ids}
         self._clients = {}
-        self._rotations = np.empty((model.ngeom, 3, 3))
+        self._rotations = geom_rotations(model)
         self._meshes, self._rendered = {}, {}
         self._root = server.scene.add_frame('/muse', show_axes=False, visible=False)
         for obj in objects:
             server.scene.add_frame(self._names[obj.object_id], show_axes=False)
             for geom in obj.geom_ids:
-                mujoco.mju_quat2Mat(self._rotations[geom].reshape(9), model.geom_quat[geom])
                 mesh = merge_geoms(model, [geom])
                 self._meshes[geom] = mesh
                 self._rendered[geom] = server.scene.add_mesh_trimesh(
@@ -71,12 +71,7 @@ class SceneInteraction:
             if self._closed:
                 return
             first = self._frame is None
-            self._data.xpos[:] = xpos
-            self._data.xmat[:] = np.asarray(xmat).reshape(-1, 9)
-            rotations = self._data.xmat.reshape(-1, 3, 3)[self.model.geom_bodyid]
-            self._data.geom_xpos[:] = self._data.xpos[self.model.geom_bodyid] + np.einsum(
-                'nij,nj->ni', rotations, self.model.geom_pos)
-            self._data.geom_xmat[:] = (rotations @ self._rotations).reshape(-1, 9)
+            apply_body_poses(self.model, self._data, xpos, xmat, self._rotations)
             self._frame = dict(frame)
             for geom, handle in self._rendered.items():
                 body = self.model.geom_bodyid[geom]

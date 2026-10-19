@@ -209,7 +209,7 @@ def test_invalid_patch_is_atomic_and_timeout_late_ack_is_actual(display_run):
 def test_model_hash_nbody_and_capacity_fail_explicitly(tmp_path):
     import mujoco
     from muse_runtime.preview import export_model
-    from muse_server.viewers.viser_process import load_model
+    from muse_server.viewers.scene_data import load_model
     from muse_sdk.run_protocol import preview_socketpair, check_preview_capacity
     model = mujoco.MjModel.from_xml_string('<mujoco/>')
     first = export_model(model, tmp_path, objects=[])

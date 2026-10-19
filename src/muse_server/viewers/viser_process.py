@@ -1,6 +1,5 @@
 """Viser 消费快照并转发控制意图；不导入 Runtime，也不推进物理。"""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,18 +9,6 @@ import threading
 import time
 
 from muse_sdk.run_protocol import drain_preview
-
-
-def load_model(path, sha256, nbody):
-    import mujoco
-    with Path(path).open('rb') as stream:
-        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-    if digest != sha256:
-        raise ValueError('Preview model hash mismatch')
-    model = mujoco.MjModel.from_binary_path(str(path))
-    if model.nbody != nbody:
-        raise ValueError('Preview model nbody mismatch')
-    return model
 
 
 def create_interaction_controls(gui, world, emit, *, interactive):
@@ -114,6 +101,7 @@ def main():
         import viser
         from muse_sdk.view_protocol import SceneObject, ViewIntent
         from .scene_interaction import SceneInteraction
+        from .scene_data import load_model
         model = load_model(args.model, args.sha256, args.nbody)
         objects = [SceneObject.model_validate(obj) for obj in json.loads(args.objects.read_text(encoding='utf-8'))]
         server = viser.ViserServer(host='127.0.0.1', port=args.port, verbose=False)
