@@ -142,7 +142,9 @@ def test_native_acceptance(case):
                             slot = display[viewer]
                             if slot['status'] == 'ready' and slot['frame'] is not None:
                                 ready_at.setdefault(viewer, observed)
-                            if case != 'interactive' and slot['status'] == 'error' and run['state'] not in TERMINAL:
+                            # Worker终态之后Server仍须等viewer writer退出再发布可靠终态。
+                            if (case != 'interactive' and slot['status'] == 'error'
+                                    and run['state'] not in TERMINAL and run['worker_terminal'] is None):
                                 pytest.fail(f'{viewer}: {slot["error"]}')
                         if run['state'] in TERMINAL:
                             break
@@ -194,6 +196,16 @@ def test_native_acceptance(case):
                 row['invariants_passed'] = True
                 # 桌面截图、真实WebEngine连接、CPU/显存和稳态区间由同次现场记录补充，不伪造自动通过。
                 row['desktop_evidence'] = 'pending independent observation'
+                save()
+                # 本验收的真实GUI是同次Run消费者；收齐其终态取证后才停Server。
+                scale = '1' if case == 'native' else '1.5'
+                desktop = EVIDENCE / f'desktop/{case}-scale{scale}/result.json'
+                while not desktop.exists():
+                    assert time.monotonic() < deadline, 'Desktop observation exceeded authorized budget'
+                    time.sleep(.1)
+                desktop_result = json.loads(desktop.read_text())
+                assert desktop_result['success'] and desktop_result['gui_closed'], desktop_result
+                row['desktop_evidence'] = str(desktop.relative_to(EVIDENCE))
                 save()
         except BaseException as exc:
             row['test_error'] = repr(exc)
