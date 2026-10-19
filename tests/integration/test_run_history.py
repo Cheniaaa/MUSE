@@ -140,7 +140,7 @@ def test_started_viewer_missing_log_is_not_reported_as_not_started(tmp_path):
         supervisor.submit(plan)
         wait_for(lambda: supervisor.get_run(plan.run_id)['state'] == 'RUNNING')
         assert _run_log_page(supervisor, plan.run_id, 'viser', 0, 10)['availability'] == 'not_started'
-        supervisor.patch_display(plan.run_id, {'enabled': True})
+        supervisor.patch_display(plan.run_id, {'viser': {'enabled': True}})
         ready(supervisor, plan.run_id)
         supervisor.cancel(plan.run_id)
         wait_for(lambda: supervisor.get_run(plan.run_id)['state'] == 'CANCELLED')

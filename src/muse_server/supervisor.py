@@ -207,7 +207,7 @@ class Supervisor:
     def _send_control(self, run_id, control):
         with self._lock:
             active = self._active
-            if active is None or active['record']['run_id'] != run_id:
+            if active is None or active['record']['run_id'] != run_id or active.get('finishing'):
                 raise ValueError('Run has no live Worker')
             active['control'] += (control.model_dump_json() + '\n').encode()
             self._wake.set()
@@ -260,6 +260,9 @@ class Supervisor:
         with self._lock:
             record = self.get_run(run_id)
             if record['state'] in TERMINAL_STATES or record['cancel_requested']:
+                return record
+            if (self._active is not None and self._active['record']['run_id'] == run_id
+                    and self._active.get('finishing')):
                 return record
             record['cancel_requested'] = True
             if record['state'] == 'QUEUED':
@@ -467,9 +470,13 @@ class Supervisor:
                 if queued:
                     self._spawn(queued[0])
             return
-        self._drain()
         active = self._active
         record, process = active['record'], active['process']
+        if active.get('finishing'):
+            if self._displays[record['run_id']].drained:
+                self._finish_active()
+            return
+        self._drain()
         if active['control']:
             try:
                 count = os.write(process.stdin.fileno(), active['control'])
@@ -480,29 +487,13 @@ class Supervisor:
                 active['control'] = b''
         code = process.poll()
         if code is not None and active['eof'] == {'protocol', 'log'}:
-            record['exit_code'] = code
-            terminal = record['worker_terminal']
-            if record['failure'] is not None:
-                record['state'] = 'FAILED'
-            elif record['cancel_requested'] and (
-                    (record['forced'] and code in (-signal.SIGTERM, -signal.SIGKILL))
-                    or (terminal and terminal['state'] == 'CANCELLED' and code == 0)):
-                record['state'] = 'CANCELLED'
-            elif code != 0 or terminal is None:
-                record['state'] = 'FAILED'
-                record['failure'] = f'Worker exited {code}' if code != 0 else 'Worker exited without terminal'
-            elif terminal['state'] == 'COMPLETED':
-                record['state'] = 'COMPLETED'
-            else:
-                record['state'] = 'FAILED'
-                record['failure'] = 'Unrequested cancellation'
             process.stdin.close()
             for name in ('log', 'events', 'metrics'):
                 active[name].close()
-            self._publish_terminal(record)
-            self._index_artifacts(record)
-            self._save(record)
-            self._active = None
+            active['finishing'] = True
+            self._displays[record['run_id']].release()
+            if self._displays[record['run_id']].drained:
+                self._finish_active()
             return
         now = time.monotonic()
         limits = active['plan'].timeouts
@@ -521,10 +512,34 @@ class Supervisor:
         elif now - active['heartbeat_at'] >= limits.heartbeat:
             self._fail('heartbeat timeout')
 
+    def _finish_active(self):
+        active = self._active
+        record, code = active['record'], active['process'].returncode
+        record['exit_code'] = code
+        terminal = record['worker_terminal']
+        if record['failure'] is not None:
+            record['state'] = 'FAILED'
+        elif record['cancel_requested'] and (
+                (record['forced'] and code in (-signal.SIGTERM, -signal.SIGKILL))
+                or (terminal and terminal['state'] == 'CANCELLED' and code == 0)):
+            record['state'] = 'CANCELLED'
+        elif code != 0 or terminal is None:
+            record['state'] = 'FAILED'
+            record['failure'] = f'Worker exited {code}' if code != 0 else 'Worker exited without terminal'
+        elif terminal['state'] == 'COMPLETED':
+            record['state'] = 'COMPLETED'
+        else:
+            record['state'] = 'FAILED'
+            record['failure'] = 'Unrequested cancellation'
+        self._publish_terminal(record)
+        self._index_artifacts(record)
+        self._save(record)
+        self._active = None
+
     def _index_artifacts(self, record):
         directory = Path(record['artifact_directory'])
         for relative, kind in (('resolved_run_plan.json', 'run_plan'), ('logs/worker.log', 'log'),
-                                ('logs/viser.log', 'viser_log'),
+                                ('logs/viser.log', 'viser_log'), ('logs/native.log', 'native_log'),
                                ('events.jsonl', 'events'), ('metrics.jsonl', 'metrics')):
             path = directory / relative
             if path.is_file():

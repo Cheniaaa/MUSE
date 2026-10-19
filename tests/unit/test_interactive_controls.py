@@ -39,15 +39,15 @@ def test_controls_pending_ack_error_and_selected_world():
     assert 'pending' in gui.controls['Interaction'].value
     assert all(gui.controls[name].disabled for name in ('Pause', 'Resume', 'Step', 'Reset world'))
     # 已在 pipe 中的旧显示 state 不能把刚发出的命令显示成已生效。
-    update({'kind': 'state', 'state': {'interaction': {'command': None, 'result': None}}})
+    update({'kind': 'state', 'state': {}, 'interaction': {'command': None, 'result': None}})
     assert 'pending' in gui.controls['Interaction'].value
     assert gui.controls['Pause'].disabled
     interaction = {'command': {'command_seq': 1, 'command': 'pause', 'world_id': None}, 'result': None}
-    update({'kind': 'state', 'state': {'interaction': interaction}})
+    update({'kind': 'state', 'state': {}, 'interaction': interaction})
     assert 'pending' in gui.controls['Interaction'].value
     interaction['result'] = dict(command_seq=1, command='pause', world_id=None,
                                  status='applied', paused=True, steps=7, updates=0, error=None)
-    update({'kind': 'state', 'state': {'interaction': interaction}})
+    update({'kind': 'state', 'state': {}, 'interaction': interaction})
     assert 'applied' in gui.controls['Interaction'].value and 'paused' in gui.controls['Interaction'].value
     assert gui.controls['Pause'].disabled and not gui.controls['Step'].disabled
     gui.controls['Reset world'].callback(SimpleNamespace(client_id=1))
@@ -59,6 +59,6 @@ def test_controls_pending_ack_error_and_selected_world():
     interaction = {'command': {'command_seq': 2, 'command': 'step', 'world_id': None},
                    'result': dict(command_seq=2, command='step', world_id=None, status='rejected',
                                   paused=False, steps=7, updates=0, error='step requires pause')}
-    update({'kind': 'state', 'state': {'interaction': interaction}})
+    update({'kind': 'state', 'state': {}, 'interaction': interaction})
     assert 'rejected' in gui.controls['Interaction'].value and 'step requires pause' in gui.controls['Interaction'].value
     assert gui.controls['Step'].disabled and not gui.controls['Pause'].disabled

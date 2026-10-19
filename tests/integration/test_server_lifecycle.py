@@ -180,7 +180,8 @@ uvicorn.run(create_app(sys.argv[1], worker_command=worker,
                     assert event['kind'] == 'terminal' and event['run_id'] == run_id
                     assert event['payload']['state'] == state
                 display = reopened.get(f'/runs/{run_id}/display').json()
-                assert not display['effective']['enabled'] and display['viewer_url'] is None
+                assert not display['viser']['effective']['enabled'] and display['viser']['viewer_url'] is None
+                assert not display['native']['effective']['enabled']
                 assert not reopened.get(f'/runs/{run_id}/entities').json()['available']
             records = {r['run_id']: r for r in reopened.get('/runs').json()['items']}
             assert set(records) == {completed, active, queued['run_id']}

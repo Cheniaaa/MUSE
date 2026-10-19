@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 
 
-def frame(seq=1, world=0, episode=0, decision=1, nbody=2):
+def frame(seq=1, world=0, episode=0, decision=1, nbody=2, viewer='viser'):
     from muse_sdk.run_protocol import PreviewFrame, encode_preview
-    header = PreviewFrame(run_id='r', world_id=world, selection_seq=seq, episode=episode,
+    header = PreviewFrame(run_id='r', viewer=viewer, world_id=world, selection_seq=seq, episode=episode,
                           decision=decision, tick=decision * 20, sim_time=decision * .04,
                           scene_hash='a' * 64, nbody=nbody)
     arrays = np.concatenate((np.zeros(nbody * 3, dtype='<f4'),
@@ -22,13 +22,15 @@ def frame(seq=1, world=0, episode=0, decision=1, nbody=2):
 
 def test_seqpacket_drain_filters_old_selection_and_reset():
     from muse_sdk.run_protocol import preview_socketpair, drain_preview
+    from preview_helpers import preview_control
+    selections = {'viser': preview_control('r', 2, world=1).preview.viser}
     sender, receiver = preview_socketpair()
     try:
         for packet in (frame(decision=9), frame(2, 1, 0, 8), frame(2, 1, 1, 0), frame(decision=99)):
             sender.send(packet)
-        packet = drain_preview(receiver, run_id='r', selection_seq=2, world_id=1, scene_hash='a' * 64)
+        packet = drain_preview(receiver, run_id='r', selections=selections, scene_hash='a' * 64)['viser']
         assert packet[0].episode == 1 and packet[0].decision == 0
-        assert drain_preview(receiver, run_id='r', selection_seq=2, world_id=1, scene_hash='a' * 64) is None
+        assert drain_preview(receiver, run_id='r', selections=selections, scene_hash='a' * 64) == {}
     finally:
         sender.close()
         receiver.close()
@@ -36,6 +38,8 @@ def test_seqpacket_drain_filters_old_selection_and_reset():
 
 def test_seqpacket_full_is_nonblocking_pending_replaced_and_truncation_explicit():
     from muse_sdk.run_protocol import preview_socketpair, send_preview, drain_preview
+    from preview_helpers import preview_control
+    selections = {'viser': preview_control('r', 1).preview.viser}
     sender, receiver = preview_socketpair()
     try:
         start = time.monotonic()
@@ -43,13 +47,13 @@ def test_seqpacket_full_is_nonblocking_pending_replaced_and_truncation_explicit(
         for i in range(2000):
             pending = send_preview(sender, frame(decision=i))
         assert pending is not None and time.monotonic() - start < 3
-        drain_preview(receiver, run_id='r', selection_seq=1, world_id=0, scene_hash='a' * 64)
+        drain_preview(receiver, run_id='r', selections=selections, scene_hash='a' * 64)
         assert send_preview(sender, pending) is None
-        result = drain_preview(receiver, run_id='r', selection_seq=1, world_id=0, scene_hash='a' * 64)
+        result = drain_preview(receiver, run_id='r', selections=selections, scene_hash='a' * 64)['viser']
         assert result[0].decision == 1999
         sender.send(frame())
         with pytest.raises(ValueError, match='truncated'):
-            drain_preview(receiver, run_id='r', selection_seq=1, world_id=0, scene_hash='a' * 64, capacity=16)
+            drain_preview(receiver, run_id='r', selections=selections, scene_hash='a' * 64, capacity=16)
     finally:
         sender.close()
         receiver.close()
@@ -117,22 +121,32 @@ objects = [SceneObject(object_id='probe', label='Probe', kind='entity', group_id
 metadata = export_model(model, Path(plan.artifact_directory), objects=objects)
 p.emit('preview_model', metadata.model_dump())
 p.emit('running')
-current = None
-pending = None
+current = {}
+pending = {}
 decision = 0
 while p.read_control() != 'cancel':
     for control in p.take_preview_controls():
         time.sleep(.25)
-        current = control
-        p.emit('preview_applied', {'selection_seq': current.selection_seq, 'display': current.display.model_dump()})
-    if current and current.display.enabled:
+        for viewer in ('viser', 'native'):
+            selection = getattr(control.preview, viewer)
+            if selection.selection_seq == 0 or (viewer in current and
+                    current[viewer].selection_seq == selection.selection_seq):
+                continue
+            current[viewer] = selection
+            pending.pop(viewer, None)
+            p.emit('preview_applied', {'viewer': viewer, 'selection_seq': selection.selection_seq,
+                                      'display': selection.display.model_dump()})
+    if any(selection.display.enabled for selection in current.values()):
         decision += 1
-        header = PreviewFrame(run_id=plan.run_id, world_id=current.display.world_id,
-            selection_seq=current.selection_seq, episode=decision//100, decision=decision%100,
+    for viewer, selection in current.items():
+        if not selection.display.enabled:
+            continue
+        header = PreviewFrame(run_id=plan.run_id, viewer=viewer, world_id=selection.display.world_id,
+            selection_seq=selection.selection_seq, episode=decision//100, decision=decision%100,
             tick=(decision%100)*20, sim_time=(decision%100)*.04, scene_hash=metadata.sha256, nbody=model.nbody)
-        pos = np.zeros((1,model.nbody,3),dtype='<f4'); pos[0,1] = [current.display.world_id,0,1]
+        pos = np.zeros((1,model.nbody,3),dtype='<f4'); pos[0,1] = [selection.display.world_id,0,1]
         mat = np.tile(np.eye(3,dtype='<f4'),(1,model.nbody,1,1))
-        pending = send_preview(s, encode_preview(header, pos.tobytes()+mat.tobytes()))
+        pending[viewer] = send_preview(s, encode_preview(header, pos.tobytes()+mat.tobytes()))
     p.emit('heartbeat')
     time.sleep(.015)
 p.emit('terminal', {'state':'CANCELLED','steps':decision,'updates':0})
@@ -152,36 +166,36 @@ def display_run(tmp_path):
         yield supervisor, plan
 
 
-def ready(supervisor, run_id):
+def ready(supervisor, run_id, viewer='viser'):
     from test_supervisor import wait_for
-    return wait_for(lambda: (s if (s := supervisor.get_display(run_id))['status'] == 'ready' else None), timeout=15)
+    return wait_for(lambda: (s if (s := supervisor.get_display(run_id)[viewer])['status'] == 'ready' else None), timeout=15)
 
 
 def test_real_process_ack_ready_close_reopen_and_failure_isolation(display_run):
     from test_supervisor import wait_for
     supervisor, plan = display_run
     run_id = plan.run_id
-    before = supervisor.get_display(run_id)
-    result = supervisor.patch_display(run_id, {'enabled': True, 'world_id': 1, 'rate_hz': 20.})
+    before = supervisor.get_display(run_id)['viser']
+    result = supervisor.patch_display(run_id, {'viser': {'enabled': True, 'world_id': 1, 'rate_hz': 20.}})['viser']
     assert result['status'] == 'pending' and result['effective'] == before['effective']
     result = ready(supervisor, run_id)
     assert result['effective'] == {'enabled': True, 'world_id': 1, 'rate_hz': 20.}
     assert result['viewer_url'].startswith('http://127.0.0.1:')
     session = supervisor._displays[run_id]
-    first_pid = session.process.pid
+    first_pid = session.slots['viser'].process.pid
     first_hash = session.model.sha256
-    session.process.kill()
-    wait_for(lambda: supervisor.get_display(run_id)['status'] == 'error')
+    session.slots['viser'].process.kill()
+    wait_for(lambda: supervisor.get_display(run_id)['viser']['status'] == 'error')
     assert supervisor.get_run(run_id)['state'] == 'RUNNING'
-    supervisor.patch_display(run_id, {'enabled': False})
-    wait_for(lambda: not supervisor.get_display(run_id)['effective']['enabled'])
-    assert supervisor.get_display(run_id)['requested']['world_id'] == 1
-    supervisor.patch_display(run_id, {'enabled': True})
+    supervisor.patch_display(run_id, {'viser': {'enabled': False}})
+    wait_for(lambda: not supervisor.get_display(run_id)['viser']['effective']['enabled'])
+    assert supervisor.get_display(run_id)['viser']['requested']['world_id'] == 1
+    supervisor.patch_display(run_id, {'viser': {'enabled': True}})
     ready(supervisor, run_id)
-    assert session.process.pid != first_pid and session.model.sha256 == first_hash
+    assert session.slots['viser'].process.pid != first_pid and session.model.sha256 == first_hash
     supervisor.cancel(run_id)
     wait_for(lambda: supervisor.get_run(run_id)['state'] == 'CANCELLED')
-    assert supervisor.get_display(run_id)['viewer_url'] is None
+    assert supervisor.get_display(run_id)['viser']['viewer_url'] is None
 
 
 def test_invalid_patch_is_atomic_and_timeout_late_ack_is_actual(display_run):
@@ -189,19 +203,20 @@ def test_invalid_patch_is_atomic_and_timeout_late_ack_is_actual(display_run):
     supervisor, plan = display_run
     run_id = plan.run_id
     before = supervisor.get_display(run_id)
-    for patch in ({'world_id': 2}, {'rate_hz': 31.}, {'rate_hz': 0.}, {'enabled': None}, {'native': True}):
+    for patch in ({'viser': {'world_id': 2}}, {'viser': {'rate_hz': 31.}},
+                  {'viser': {'rate_hz': 0.}}, {'viser': {'enabled': None}}, {'native': True}):
         with pytest.raises(ValueError):
             supervisor.patch_display(run_id, patch)
         assert supervisor.get_display(run_id) == before
     session = supervisor._displays[run_id]
     session.ack_timeout = .05
-    first = supervisor.patch_display(run_id, {'enabled': True, 'world_id': 1})
-    wait_for(lambda: supervisor.get_display(run_id)['status'] == 'error')
-    assert supervisor.get_display(run_id)['effective'] == before['effective']
-    second = supervisor.patch_display(run_id, {'world_id': 0})
-    applied = wait_for(lambda: (s if (s := supervisor.get_display(run_id))['effective_seq'] == first['selection_seq'] else None))
+    first = supervisor.patch_display(run_id, {'viser': {'enabled': True, 'world_id': 1}})['viser']
+    wait_for(lambda: supervisor.get_display(run_id)['viser']['status'] == 'error')
+    assert supervisor.get_display(run_id)['viser']['effective'] == before['viser']['effective']
+    second = supervisor.patch_display(run_id, {'viser': {'world_id': 0}})['viser']
+    applied = wait_for(lambda: (s if (s := supervisor.get_display(run_id)['viser'])['effective_seq'] == first['selection_seq'] else None))
     assert applied['effective']['world_id'] == 1 and applied['requested']['world_id'] == 0
-    wait_for(lambda: supervisor.get_display(run_id)['effective_seq'] == second['selection_seq'])
+    wait_for(lambda: supervisor.get_display(run_id)['viser']['effective_seq'] == second['selection_seq'])
     result = ready(supervisor, run_id)
     assert result['effective']['world_id'] == 0
 
@@ -237,7 +252,7 @@ def test_port_conflict_uses_actual_viser_port(display_run):
         occupied.listen()
         port = occupied.getsockname()[1]
         supervisor._displays[plan.run_id].viewer_port = port
-        supervisor.patch_display(plan.run_id, {'enabled': True})
+        supervisor.patch_display(plan.run_id, {'viser': {'enabled': True}})
         result = ready(supervisor, plan.run_id)
         assert int(result['viewer_url'].rsplit(':', 1)[1]) != port
 
@@ -263,14 +278,14 @@ def test_display_api_validates_and_uses_same_state(tmp_path):
         wait_for(lambda: client.get(f'/runs/{run_id}').json()['state'] == 'RUNNING')
         path = f'/runs/{run_id}/display'
         before = client.get(path).json()
-        assert client.patch(path, json={'world_id': 99}).status_code == 422
-        assert client.patch(path, json={'rate_hz': 30.1}).status_code == 422
+        assert client.patch(path, json={'viser': {'world_id': 99}}).status_code == 422
+        assert client.patch(path, json={'viser': {'rate_hz': 30.1}}).status_code == 422
         assert client.patch(path, json={'native': True}).status_code == 422
         assert client.get(path).json() == before
-        accepted = client.patch(path, json={'enabled': True, 'world_id': 1}).json()
-        assert accepted['status'] == 'pending' and accepted['effective'] == before['effective']
+        accepted = client.patch(path, json={'viser': {'enabled': True, 'world_id': 1}}).json()['viser']
+        assert accepted['status'] == 'pending' and accepted['effective'] == before['viser']['effective']
         ready(client.app.state.supervisor, run_id)
-        assert client.get(path).json()['effective']['world_id'] == 1
+        assert client.get(path).json()['viser']['effective']['world_id'] == 1
         assert client.get('/runs/missing/display').status_code == 404
 
 
@@ -280,7 +295,7 @@ def test_native_controls_submit_to_shared_server_state(display_run):
     from websockets.sync.client import connect
     from test_supervisor import wait_for
     supervisor, plan = display_run
-    supervisor.patch_display(plan.run_id, {'enabled': True})
+    supervisor.patch_display(plan.run_id, {'viser': {'enabled': True}})
     state = ready(supervisor, plan.run_id)
     with connect(state['viewer_url'].replace('http:', 'ws:'), max_size=None, subprotocols=['viser-v1.1.1']) as ws:
         ws.send(msgspec.msgpack.encode({'type': 'ViewerCameraMessage', 'wxyz': [1., 0., 0., 0.],
@@ -297,10 +312,10 @@ def test_native_controls_submit_to_shared_server_state(display_run):
                     controls[message['props']['label']] = message['uuid']
         assert {'World', 'Rate (Hz)'} <= controls.keys()
         ws.send(msgspec.msgpack.encode({'type': 'GuiUpdateMessage', 'uuid': controls['World'], 'updates': {'value': '1'}}))
-        wait_for(lambda: supervisor.get_display(plan.run_id)['requested']['world_id'] == 1)
+        wait_for(lambda: supervisor.get_display(plan.run_id)['viser']['requested']['world_id'] == 1)
         ready(supervisor, plan.run_id)
         ws.send(msgspec.msgpack.encode({'type': 'GuiUpdateMessage', 'uuid': controls['Rate (Hz)'], 'updates': {'value': 17.}}))
-        wait_for(lambda: supervisor.get_display(plan.run_id)['requested']['rate_hz'] == 17.)
+        wait_for(lambda: supervisor.get_display(plan.run_id)['viser']['requested']['rate_hz'] == 17.)
         result = ready(supervisor, plan.run_id)
         assert result['effective'] == {'enabled': True, 'world_id': 1, 'rate_hz': 17.}
         import signal
@@ -311,12 +326,12 @@ def test_native_controls_submit_to_shared_server_state(display_run):
             ws.send(msgspec.msgpack.encode({'type': 'GuiUpdateMessage', 'uuid': controls['Rate (Hz)'], 'updates': {'value': 40.}}))
             deadline = time.monotonic() + .3
             while time.monotonic() < deadline:
-                observed = supervisor.get_display(plan.run_id)
+                observed = supervisor.get_display(plan.run_id)['viser']
                 assert observed['status'] == 'ready' and observed['error'] is None
                 time.sleep(.001)
         finally:
             os.kill(worker_pid, signal.SIGCONT)
-        after = supervisor.get_display(plan.run_id)
+        after = supervisor.get_display(plan.run_id)['viser']
         assert {k: after[k] for k in ('requested', 'effective', 'selection_seq', 'status', 'error')} == {
             k: result[k] for k in ('requested', 'effective', 'selection_seq', 'status', 'error')}
 
@@ -325,12 +340,12 @@ def test_viewer_failure_remains_visible_after_late_ack(display_run):
     from test_supervisor import wait_for
     supervisor, plan = display_run
     run_id = plan.run_id
-    request = supervisor.patch_display(run_id, {'enabled': True})
+    request = supervisor.patch_display(run_id, {'viser': {'enabled': True}})['viser']
     session = supervisor._displays[run_id]
-    session.process.kill()
-    wait_for(lambda: supervisor.get_display(run_id)['status'] == 'error')
-    wait_for(lambda: supervisor.get_display(run_id)['effective_seq'] == request['selection_seq'])
-    state = supervisor.get_display(run_id)
+    session.slots['viser'].process.kill()
+    wait_for(lambda: supervisor.get_display(run_id)['viser']['status'] == 'error')
+    wait_for(lambda: supervisor.get_display(run_id)['viser']['effective_seq'] == request['selection_seq'])
+    state = supervisor.get_display(run_id)['viser']
     assert state['effective']['enabled']
     assert state['status'] == 'error' and 'Viser' in state['error']
     assert supervisor.get_run(run_id)['state'] == 'RUNNING'
@@ -362,7 +377,8 @@ def test_paused_real_viewer_drains_to_latest_current_selection(tmp_path):
             assert json.loads(process.stdout.readline())['kind'] == 'loaded'
             settings = {'enabled': True, 'world_id': 1, 'rate_hz': 30.}
             state = {'effective': settings, 'effective_seq': 2, 'status': 'pending', 'error': None}
-            process.stdin.write((json.dumps({'kind': 'state', 'state': state, 'view_ids': []}) + '\n').encode())
+            process.stdin.write((json.dumps({'kind': 'state', 'state': state,
+                'interaction': {'command': None, 'result': None}, 'view_ids': []}) + '\n').encode())
             process.stdin.flush()
             os.kill(process.pid, signal.SIGSTOP)
             wait_for(lambda: Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()[0] == 'T')
@@ -411,12 +427,12 @@ def test_paused_viewer_full_does_not_block_heartbeat_or_cancel(display_run):
     import signal
     from test_supervisor import wait_for
     supervisor, plan = display_run
-    supervisor.patch_display(plan.run_id, {'enabled': True})
+    supervisor.patch_display(plan.run_id, {'viser': {'enabled': True}})
     ready(supervisor, plan.run_id)
     session = supervisor._displays[plan.run_id]
-    os.kill(session.process.pid, signal.SIGSTOP)
+    os.kill(session.slots['viser'].process.pid, signal.SIGSTOP)
     previous = supervisor.get_run(plan.run_id)['heartbeat']
-    wait_for(lambda: session.pending is not None, timeout=15)
+    wait_for(lambda: session.slots['viser'].pending is not None, timeout=15)
     assert supervisor.get_run(plan.run_id)['heartbeat'] > previous
     supervisor.cancel(plan.run_id)
     wait_for(lambda: supervisor.get_run(plan.run_id)['state'] == 'CANCELLED')
@@ -445,7 +461,7 @@ def test_interactive_viser_buttons_use_supervisor_and_ack(tmp_path):
     with Supervisor(catalog, worker_command=worker, viewer_port=0) as supervisor:
         supervisor.submit(plan)
         wait_for(lambda: supervisor.get_run(plan.run_id)['state'] == 'RUNNING')
-        supervisor.patch_display(plan.run_id, {'enabled': True, 'world_id': 1})
+        supervisor.patch_display(plan.run_id, {'viser': {'enabled': True, 'world_id': 1}})
         state = ready(supervisor, plan.run_id)
         with connect(state['viewer_url'].replace('http:', 'ws:'), max_size=None, subprotocols=['viser-v1.1.1']) as ws:
             ws.send(msgspec.msgpack.encode({'type': 'ViewerCameraMessage', 'wxyz': [1., 0., 0., 0.],
@@ -507,29 +523,29 @@ def test_real_gpu_api_display_lifecycle(tmp_path):
                 run_id = client.post('/runs', json={'experiment_id': identity, 'mode': 'TRAIN', 'max_decision_steps': 100000}).json()['run_id']
                 wait_for(lambda: client.get(f'/runs/{run_id}').json()['pid'] is not None)
                 path = f'/runs/{run_id}/display'
-                response = client.patch(path, json={'enabled': True})
+                response = client.patch(path, json={'viser': {'enabled': True}})
                 assert response.status_code == 200, response.text
                 def displayed():
                     run = client.get(f'/runs/{run_id}').json()
                     assert run['state'] not in ('FAILED', 'COMPLETED'), run
-                    state = client.get(path).json()
+                    state = client.get(path).json()['viser']
                     return state if state['status'] == 'ready' else None
                 first = wait_for(displayed, timeout=180)
                 assert first['frame']['nbody'] == 4
                 assert client.get(first['viewer_url']).is_success
-                client.patch(path, json={'world_id': 1})
+                client.patch(path, json={'viser': {'world_id': 1}})
                 second = wait_for(displayed)
                 assert second['frame']['world_id'] == 1
                 assert second['frame']['scene_hash'] == first['frame']['scene_hash']
-                client.patch(path, json={'enabled': False})
-                wait_for(lambda: not client.get(path).json()['effective']['enabled'])
-                client.patch(path, json={'enabled': True})
+                client.patch(path, json={'viser': {'enabled': False}})
+                wait_for(lambda: not client.get(path).json()['viser']['effective']['enabled'])
+                client.patch(path, json={'viser': {'enabled': True}})
                 reopened = wait_for(displayed, timeout=15)
                 assert reopened['frame']['world_id'] == 1
                 client.post(f'/runs/{run_id}/cancel')
                 result = wait_for(lambda: (r if (r := client.get(f'/runs/{run_id}').json())['state'] == 'CANCELLED' else None))
                 assert result['metrics']['updates'] > 0
-                assert client.get(path).json()['viewer_url'] is None
+                assert client.get(path).json()['viser']['viewer_url'] is None
                 print('GPU_DISPLAY_RESULT', json.dumps({'run_id': run_id, 'port': port,
                     'directory': result['artifact_directory'], 'first': first, 'reopened': reopened,
                     'steps': result['metrics']['steps'], 'updates': result['metrics']['updates']}))

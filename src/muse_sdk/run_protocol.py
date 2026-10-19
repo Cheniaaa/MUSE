@@ -63,15 +63,14 @@ class WorkerControl(DataModel):
     run_id: str
     kind: Literal['cancel', 'preview', 'command']
     command: InteractiveCommand | None = None
-    selection_seq: int | None = Field(default=None, gt=0)
-    display: 'DisplaySettings | None' = None
+    preview: 'PreviewSelections | None' = None
 
     @model_validator(mode='after')
     def preview_fields(self):
         if (self.kind == 'command') != (self.command is not None):
             raise ValueError('Only command controls require command')
-        if self.kind == 'preview' and (self.selection_seq is None or self.display is None):
-            raise ValueError('preview requires selection_seq and display')
+        if (self.kind == 'preview') != (self.preview is not None):
+            raise ValueError('Only preview controls require preview selections')
         return self
 
 
@@ -111,7 +110,10 @@ class DisplaySettings(DataModel):
     rate_hz: float = Field(ge=1, le=30)
 
 
-class DisplayPatch(DataModel):
+ViewerName = Literal['viser', 'native']
+
+
+class ViewerPatch(DataModel):
     enabled: bool | None = None
     world_id: int | None = Field(default=None, ge=0)
     rate_hz: float | None = Field(default=None, ge=1, le=30)
@@ -121,6 +123,27 @@ class DisplayPatch(DataModel):
         if any(getattr(self, key) is None for key in self.model_fields_set):
             raise ValueError('Display fields cannot be null')
         return self
+
+
+class DisplayPatch(DataModel):
+    viser: ViewerPatch | None = None
+    native: ViewerPatch | None = None
+
+    @model_validator(mode='after')
+    def one_viewer(self):
+        if len(self.model_fields_set) != 1 or getattr(self, next(iter(self.model_fields_set))) is None:
+            raise ValueError('Display patch requires exactly one non-null viewer')
+        return self
+
+
+class PreviewSelection(DataModel):
+    selection_seq: int = Field(ge=0)
+    display: DisplaySettings
+
+
+class PreviewSelections(DataModel):
+    viser: PreviewSelection
+    native: PreviewSelection
 
 
 class SceneObject(DataModel):
@@ -147,11 +170,13 @@ class PreviewModel(DataModel):
 
 
 class PreviewApplied(DataModel):
+    viewer: ViewerName
     selection_seq: int = Field(gt=0)
     display: DisplaySettings
 
 
 class PreviewFrame(DataModel):
+    viewer: ViewerName
     run_id: str
     world_id: int = Field(ge=0)
     selection_seq: int = Field(gt=0)
@@ -216,8 +241,9 @@ def send_preview(sock, pending):
     return None
 
 
-def drain_preview(sock, *, run_id, selection_seq, world_id, scene_hash, capacity=PREVIEW_CAPACITY):
-    latest = None
+def drain_preview(sock, *, run_id, selections: dict[ViewerName, PreviewSelection], scene_hash,
+                  capacity=PREVIEW_CAPACITY):
+    latest = {}
     while True:
         try:
             packet, _, flags, _ = sock.recvmsg(capacity)
@@ -228,8 +254,12 @@ def drain_preview(sock, *, run_id, selection_seq, world_id, scene_hash, capacity
         if flags & socket.MSG_TRUNC:
             raise ValueError('truncated preview packet')
         header, arrays = decode_preview(packet)
-        if (header.run_id, header.selection_seq, header.world_id, header.scene_hash) != (
-                run_id, selection_seq, world_id, scene_hash):
+        selection = selections.get(header.viewer)
+        if selection is None or not selection.display.enabled:
             continue
-        if latest is None or (header.episode, header.decision) > (latest[0].episode, latest[0].decision):
-            latest = header, arrays
+        if (header.run_id, header.selection_seq, header.world_id, header.scene_hash) != (
+                run_id, selection.selection_seq, selection.display.world_id, scene_hash):
+            continue
+        previous = latest.get(header.viewer)
+        if previous is None or (header.episode, header.decision) > (previous[0].episode, previous[0].decision):
+            latest[header.viewer] = header, arrays

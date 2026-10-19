@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from muse_sdk import run_protocol as wire
+from preview_helpers import preview_control
 
 
 def command_type():
@@ -59,13 +60,10 @@ def test_protocol_keeps_commands_separate_and_cancel_priority(monkeypatch):
     protocol._commands = deque()
     commands = [cls(command_seq=1, command='pause'), cls(command_seq=2, command='step')]
     controls = [wire.WorkerControl(run_id='run', kind='command', command=c) for c in commands]
-    preview = wire.WorkerControl(run_id='run', kind='preview', selection_seq=1,
-        display=wire.DisplaySettings(enabled=True, world_id=0, rate_hz=10))
+    preview = preview_control('run', 1)
     controls.insert(1, preview)
-    latest = wire.WorkerControl(run_id='run', kind='preview', selection_seq=101,
-        display=wire.DisplaySettings(enabled=True, world_id=1, rate_hz=20))
-    controls.extend(wire.WorkerControl(run_id='run', kind='preview', selection_seq=seq,
-        display=preview.display) for seq in range(2, 101))
+    latest = preview_control('run', 101, world=1, rate=20)
+    controls.extend(preview_control('run', seq) for seq in range(2, 101))
     controls.append(latest)
     controls.append(wire.WorkerControl(run_id='run', kind='cancel'))
     chunks = iter([('\n'.join(c.model_dump_json() for c in controls) + '\n').encode(), b''])

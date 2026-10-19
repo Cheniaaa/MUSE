@@ -73,9 +73,9 @@ def main():
             return
         if run['state'] != 'QUEUED':
             if not requested:
-                api('PATCH', route + '/display', {'enabled': True})
+                api('PATCH', route + '/display', {'viser': {'enabled': True}})
                 requested = True
-            display = api('GET', route + '/display')
+            display = api('GET', route + '/display')['viser']
             if display['status'] == 'error':
                 raise RuntimeError(display['error'])
             if display['status'] == 'ready' and display['viewer_url']:

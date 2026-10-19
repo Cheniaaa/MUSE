@@ -99,17 +99,17 @@ def test_fixed_endpoints_survive_timeout_and_real_learning(fixed_env):
 def test_fixed_endpoints_in_exported_model_and_world_preview(fixed_env, tmp_path):
     import mujoco
     from muse_runtime.preview import WorkerPreview
-    from muse_sdk.run_protocol import DisplaySettings, WorkerControl, drain_preview, preview_socketpair
+    from muse_sdk.run_protocol import drain_preview, preview_socketpair
+    from preview_helpers import preview_control
     env = fixed_env
     sender, receiver = preview_socketpair()
     try:
         preview = WorkerPreview('fixed', env, tmp_path, sender, lambda *args: None)
         assert preview.error is None
-        preview.apply(WorkerControl(run_id='fixed', kind='preview', selection_seq=1,
-                                   display=DisplaySettings(enabled=True, world_id=1, rate_hz=10.)))
+        preview.apply(preview_control('fixed', 1, world=1))
         preview.sample(force=True)
-        header, raw = drain_preview(receiver, run_id='fixed', selection_seq=1, world_id=1,
-                                    scene_hash=preview.model.sha256)
+        header, raw = drain_preview(receiver, run_id='fixed', selections=preview.selections,
+                                    scene_hash=preview.model.sha256)['viser']
         model = mujoco.MjModel.from_binary_path(str(tmp_path / preview.model.path))
         pos = np.frombuffer(raw, dtype='<f4')[:model.nbody*3].reshape(model.nbody, 3)
         mat = np.frombuffer(raw, dtype='<f4')[model.nbody*3:].reshape(model.nbody, 3, 3)

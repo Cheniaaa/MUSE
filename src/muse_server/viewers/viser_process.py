@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from muse_sdk.run_protocol import drain_preview
+from muse_sdk.run_protocol import PreviewSelection, drain_preview
 
 
 def create_interaction_controls(gui, world, emit, *, interactive):
@@ -42,7 +42,7 @@ def create_interaction_controls(gui, world, emit, *, interactive):
     def update(message):
         nonlocal interaction, awaiting_after
         if message['kind'] == 'state':
-            interaction = message['state']['interaction']
+            interaction = message['interaction']
         elif message['kind'] != 'command_error':
             return
         else:
@@ -164,10 +164,10 @@ def main():
                     rate.value = state['effective']['rate_hz']
                     status.value = state['error'] or state['status']
             if state is not None:
-                latest = drain_preview(sock, run_id=args.run_id, selection_seq=state['effective_seq'],
-                    world_id=state['effective']['world_id'], scene_hash=args.sha256)
-                if latest is not None and state['effective']['enabled']:
-                    header, arrays = latest
+                latest = drain_preview(sock, run_id=args.run_id, selections={'viser': PreviewSelection(
+                    selection_seq=state['effective_seq'], display=state['effective'])}, scene_hash=args.sha256)
+                if 'viser' in latest and state['effective']['enabled']:
+                    header, arrays = latest['viser']
                     key = header.episode, header.decision
                     if cursor is None or key > cursor:
                         if header.nbody != model.nbody:

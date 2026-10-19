@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import time
 
-from muse_sdk.run_protocol import (DisplaySettings, PreviewFrame, PreviewModel,
+from muse_sdk.run_protocol import (DisplaySettings, PreviewSelection, PreviewFrame, PreviewModel,
     SceneObject, check_preview_capacity, encode_preview, send_preview)
 
 
@@ -62,12 +62,13 @@ class WorkerPreview:
         import torch
         self.run_id, self.env, self.sock, self.emit = run_id, env, sock, emit
         self.model = None
-        self.selection_seq = 0
-        self.settings = DisplaySettings(enabled=False, world_id=env.experiment.preview.world_ids[0],
-                                        rate_hz=env.experiment.preview.rate_hz)
+        self.selections = {name: PreviewSelection(selection_seq=0,
+            display=DisplaySettings(enabled=False, world_id=env.experiment.preview.world_ids[0],
+                                    rate_hz=env.experiment.preview.rate_hz)) for name in ('viser', 'native')}
         self.episodes = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
-        self.pending = None
-        self.next_sample = 0.
+        self.pending = dict.fromkeys(self.selections)
+        self.next_sample = dict.fromkeys(self.selections, 0.)
+        self._first = 'viser'
         self.error = None
         # 仅 CPU 模型导出失败可隔离；GPU 访问和同步不在此异常边界内。
         try:
@@ -81,49 +82,72 @@ class WorkerPreview:
 
     def fail(self, message):
         self.error = message
-        self.pending = None
+        self.pending = dict.fromkeys(self.selections)
         self.emit('preview_error', {'message': message})
 
     def after_step(self):
         # 只在每次成功 step 后调用；本步自动 reset 的 world clock 已归零。
-        self.episodes.add_(self.env.episode_length_buf == 0)
+        reset = self.env.episode_length_buf == 0
+        self.episodes.add_(reset)
+        worlds = {selection.display.world_id for selection in self.selections.values()
+                  if selection.display.enabled}
+        for world in worlds:
+            if reset[world].item():
+                self._invalidate_world(world)
+
+    def _invalidate_world(self, world_id):
+        for name, selection in self.selections.items():
+            if selection.display.world_id == world_id:
+                self.pending[name] = None
+                self.next_sample[name] = 0.
 
     def after_reset(self, world_id):
         self.episodes[world_id] += 1
-        self.pending = None
-        self.next_sample = 0.
+        self._invalidate_world(world_id)
 
     def apply(self, control):
-        if control.display.world_id >= self.env.num_envs:
+        choices = {name: getattr(control.preview, name) for name in self.selections}
+        if any(selection.display.world_id >= self.env.num_envs for selection in choices.values()):
             self.fail('Invalid preview world')
             return
-        self.settings = control.display
-        self.selection_seq = control.selection_seq
-        self.pending = None
-        self.next_sample = 0.
-        self.emit('preview_applied', {'selection_seq': self.selection_seq,
-                                     'display': self.settings.model_dump()})
+        for name, selection in choices.items():
+            if selection.selection_seq == self.selections[name].selection_seq:
+                continue
+            self.selections[name] = selection
+            self.pending[name] = None
+            self.next_sample[name] = 0.
+            self.emit('preview_applied', {'viewer': name, **selection.model_dump()})
         if self.error:
             self.emit('preview_error', {'message': self.error})
 
     def sample(self, force=False):
-        if not self.settings.enabled or self.error or self.model is None:
+        if self.error or self.model is None:
             return
         now = time.monotonic()
-        if force or now >= self.next_sample:
+        due = {name: selection for name, selection in self.selections.items()
+               if selection.display.enabled and (force or now >= self.next_sample[name])}
+        if due:
             import torch
-            world = self.settings.world_id
             torch.cuda.current_stream(self.env.device).synchronize()
-            pos = self.env.sim.data.xpos[world:world+1].detach().cpu().numpy().astype('<f4', copy=False)
-            mat = self.env.sim.data.xmat[world:world+1].detach().cpu().numpy().astype('<f4', copy=False)
-            decision = int(self.env.episode_length_buf[world].item())
-            tick = decision * self.env.cfg.decimation
-            header = PreviewFrame(run_id=self.run_id, world_id=world, selection_seq=self.selection_seq,
-                episode=int(self.episodes[world].item()), decision=decision, tick=tick,
-                sim_time=tick * self.env.physics_dt, scene_hash=self.model.sha256, nbody=self.model.nbody)
-            self.pending = encode_preview(header, pos.tobytes() + mat.tobytes())
-            self.next_sample = now + 1. / self.settings.rate_hz
+            samples = {}
+            for world in {selection.display.world_id for selection in due.values()}:
+                pos = self.env.sim.data.xpos[world:world+1].detach().cpu().numpy().astype('<f4', copy=False)
+                mat = self.env.sim.data.xmat[world:world+1].detach().cpu().numpy().astype('<f4', copy=False)
+                samples[world] = (pos.tobytes() + mat.tobytes(), int(self.episodes[world].item()),
+                                  int(self.env.episode_length_buf[world].item()))
+            for name, selection in due.items():
+                world = selection.display.world_id
+                arrays, episode, decision = samples[world]
+                tick = decision * self.env.cfg.decimation
+                header = PreviewFrame(viewer=name, run_id=self.run_id, world_id=world,
+                    selection_seq=selection.selection_seq, episode=episode, decision=decision, tick=tick,
+                    sim_time=tick * self.env.physics_dt, scene_hash=self.model.sha256, nbody=self.model.nbody)
+                self.pending[name] = encode_preview(header, arrays)
+                self.next_sample[name] = now + 1. / selection.display.rate_hz
         try:
-            self.pending = send_preview(self.sock, self.pending)
+            other = 'native' if self._first == 'viser' else 'viser'
+            for name in (self._first, other):
+                self.pending[name] = send_preview(self.sock, self.pending[name])
+            self._first = other
         except OSError as exc:
             self.fail(f'Preview socket unavailable: {exc}')

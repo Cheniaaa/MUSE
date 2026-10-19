@@ -9,6 +9,7 @@ import torch
 from mappo_helpers import EXAMPLE, cooperative_pipeline
 from test_checkpoint_learning import assert_learning_state_equal
 from test_cost_training import initialized, sampling_state
+from preview_helpers import preview_control
 
 
 @pytest.mark.parametrize('recurrent', ['gru', 'lstm'])
@@ -16,8 +17,7 @@ def test_interactive_subset_reset_freezes_learning_and_refreshes_preview(pipelin
     from muse_runtime.checkpoint import load_checkpoint, publish_checkpoint, snapshot_learning_state
     from muse_runtime.driver import run
     from muse_runtime.preview import WorkerPreview
-    from muse_sdk.run_protocol import (CheckpointReference, DisplaySettings, InteractiveCommand,
-                                      WorkerControl, decode_preview, preview_socketpair)
+    from muse_sdk.run_protocol import (CheckpointReference, InteractiveCommand, decode_preview, preview_socketpair)
     from muse_server.resolver import resolve_experiment
 
     catalog, baseline = cooperative_pipeline(pipeline, tmp_path)
@@ -46,8 +46,7 @@ def test_interactive_subset_reset_freezes_learning_and_refreshes_preview(pipelin
         frozen_cost_sampling = sampling_state(learner)
         preview = WorkerPreview(target.run_id, env, target.artifact_directory, sender, lambda *_: None)
         assert preview.error is None
-        preview.apply(WorkerControl(run_id=target.run_id, kind='preview', selection_seq=1,
-            display=DisplaySettings(enabled=True, world_id=0, rate_hz=30)))
+        preview.apply(preview_control(target.run_id, 1, rate=30))
         commands = deque([None, None, InteractiveCommand(command_seq=1, command='pause'),
             InteractiveCommand(command_seq=2, command='step'),
             InteractiveCommand(command_seq=3, command='reset_world', world_id=0),

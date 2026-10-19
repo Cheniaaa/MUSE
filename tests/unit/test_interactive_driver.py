@@ -154,14 +154,18 @@ def test_last_allowed_step_acknowledged_after_transition():
 
 def test_preview_explicit_reset_invalidates_pending_frame_without_step():
     from muse_runtime.preview import WorkerPreview
+    from preview_helpers import preview_control
     preview = WorkerPreview.__new__(WorkerPreview)
     preview.episodes = torch.tensor([4, 7])
-    preview.pending = b'old'
-    preview.next_sample = float('inf')
+    control = preview_control('run', 1, world=1)
+    preview.selections = {name: getattr(control.preview, name) for name in ('viser', 'native')}
+    preview.pending = {'viser': b'old', 'native': b'other'}
+    preview.next_sample = {'viser': float('inf'), 'native': 10.}
     assert hasattr(preview, 'after_reset'), 'Explicit preview reset hook missing'
     preview.after_reset(1)
     assert preview.episodes.tolist() == [4, 8]
-    assert preview.pending is None and preview.next_sample == 0
+    assert preview.pending == {'viser': None, 'native': b'other'}
+    assert preview.next_sample == {'viser': 0., 'native': 10.}
 
 
 @pytest.mark.parametrize('cancel_immediately', [False, True])
@@ -223,8 +227,8 @@ def test_worker_routes_ack_and_services_preview_while_paused(monkeypatch, cancel
     monkeypatch.setattr('time.sleep', lambda _: None)
     queue = deque([command(1, 'pause'), command(2, 'reset_world', 1),
                    command(2, 'reset_world', 1), None, command(3, 'step'), None])
-    selections = deque([wire.WorkerControl(run_id='run', kind='preview', selection_seq=1,
-        display=wire.DisplaySettings(enabled=True, world_id=1, rate_hz=10))])
+    from preview_helpers import preview_control
+    selections = deque([preview_control('run', 1, world=1)])
     control_polls = []
 
     def read_control():

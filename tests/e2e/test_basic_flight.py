@@ -90,7 +90,7 @@ def start_run(client, identity, budget):
 
 
 def patch(client, run_id, **settings):
-    return response_json(client.patch(f'/runs/{run_id}/display', json=settings))
+    return response_json(client.patch(f'/runs/{run_id}/display', json={'viser': settings}))
 
 
 def display(client, run_id):
@@ -109,7 +109,7 @@ def ready(client, run_id, seq):
     def observed():
         state = run_state(client, run_id)
         assert state['state'] not in TERMINAL, state
-        result = display(client, run_id)
+        result = display(client, run_id)['viser']
         return result if result['status'] == 'ready' and result['effective_seq'] == seq else None
     return wait_for(observed)
 
@@ -213,10 +213,10 @@ def test_same_budget_headless_and_enabled_complete_two_ippo_updates(api):
         started = start_run(client, identity, 8)
         run_id = started['run_id']
         if name == 'enabled':
-            accepted = patch(client, run_id, enabled=True)
+            accepted = patch(client, run_id, enabled=True)['viser']
             assert accepted['requested']['enabled']
         else:
-            assert not display(client, run_id)['requested']['enabled']
+            assert not display(client, run_id)['viser']['requested']['enabled']
         result = terminal(client, run_id)
         summary = evidence(client, result, experiment, destination)
         summary['request_worker_state'] = started['state']
@@ -224,9 +224,9 @@ def test_same_budget_headless_and_enabled_complete_two_ippo_updates(api):
         assert result['state'] == 'COMPLETED', result
         assert (summary['steps'], summary['updates']) == (8, 2)
         if name == 'enabled':
-            assert any(ack['selection_seq'] == accepted['selection_seq'] and ack['display']['enabled']
+            assert any(ack['viewer'] == 'viser' and ack['selection_seq'] == accepted['selection_seq'] and ack['display']['enabled']
                        for ack in summary['preview_applied'])
-            assert summary['display']['effective']['enabled']
+            assert summary['display']['viser']['effective']['enabled']
         print('E2E_BUDGET_RESULT', json.dumps(summary, allow_nan=False))
     assert report['runs']['headless']['model']['sha256'] == report['runs']['enabled']['model']['sha256']
 
@@ -235,23 +235,23 @@ def test_actual_gpu_viewer_failure_preserves_heartbeat_and_safe_cancel(api):
     client, identity, experiment, report, destination, server_pid = api
     started = start_run(client, identity, 100000)
     run_id = started['run_id']
-    first = ready(client, run_id, patch(client, run_id, enabled=True)['selection_seq'])
+    first = ready(client, run_id, patch(client, run_id, enabled=True)['viser']['selection_seq'])
     assert first['frame']['world_id'] == 0 and first['frame']['nbody'] == 4
     assert client.get(first['viewer_url']).is_success
     first_pid = viewer_pid(server_pid, run_id)
-    switched = ready(client, run_id, patch(client, run_id, world_id=1)['selection_seq'])
+    switched = ready(client, run_id, patch(client, run_id, world_id=1)['viser']['selection_seq'])
     assert switched['frame']['world_id'] == 1
-    disabled = ready(client, run_id, patch(client, run_id, enabled=False)['selection_seq'])
+    disabled = ready(client, run_id, patch(client, run_id, enabled=False)['viser']['selection_seq'])
     assert not disabled['effective']['enabled'] and disabled['viewer_url'] is None
-    reopened = ready(client, run_id, patch(client, run_id, enabled=True)['selection_seq'])
+    reopened = ready(client, run_id, patch(client, run_id, enabled=True)['viser']['selection_seq'])
     assert reopened['frame']['world_id'] == 1
     assert reopened['frame']['scene_hash'] == first['frame']['scene_hash']
     second_pid = viewer_pid(server_pid, run_id)
     assert second_pid != first_pid
     before = run_state(client, run_id)
     os.kill(second_pid, signal.SIGKILL)
-    wait_for(lambda: display(client, run_id)['status'] == 'error')
-    failed_display = display(client, run_id)
+    wait_for(lambda: display(client, run_id)['viser']['status'] == 'error')
+    failed_display = display(client, run_id)['viser']
     assert 'Viser' in failed_display['error'], failed_display
     def heartbeat_advanced():
         state = run_state(client, run_id)
@@ -269,5 +269,5 @@ def test_actual_gpu_viewer_failure_preserves_heartbeat_and_safe_cancel(api):
     assert result['state'] == 'CANCELLED' and result['cancel_requested'], result
     assert summary['steps'] < summary['max_decision_steps']
     assert 0 <= summary['steps'] - 4 * summary['updates'] <= 4
-    assert summary['display']['viewer_url'] is None
+    assert summary['display']['viser']['viewer_url'] is None
     print('E2E_LIFECYCLE_RESULT', json.dumps(summary, allow_nan=False))

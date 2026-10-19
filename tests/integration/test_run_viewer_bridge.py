@@ -212,12 +212,13 @@ def test_real_viewer_process_consumes_sidecar_routes_errors_and_filters_frames(t
             process.stdin.flush()
         def state(seq, world, ids):
             send({'kind': 'state', 'state': {'effective': {'enabled': True, 'world_id': world, 'rate_hz': 30.},
-                'effective_seq': seq, 'status': 'ready', 'error': None}, 'view_ids': ids})
+                'effective_seq': seq, 'status': 'ready', 'error': None},
+                'interaction': {'command': None, 'result': None}, 'view_ids': ids})
         def packet(seq, world, episode, decision, x):
             data = mujoco.MjData(model)
             data.qpos[:3] = [x, 0., 1.]
             mujoco.mj_forward(model, data)
-            header = PreviewFrame(run_id='run', world_id=world, selection_seq=seq, episode=episode,
+            header = PreviewFrame(run_id='run', viewer='viser', world_id=world, selection_seq=seq, episode=episode,
                 decision=decision, tick=decision * 20, sim_time=decision * .04, scene_hash=metadata.sha256, nbody=model.nbody)
             arrays = data.xpos.astype('<f4').tobytes() + data.xmat.astype('<f4').tobytes()
             return header, encode_preview(header, arrays)

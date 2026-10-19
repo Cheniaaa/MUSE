@@ -124,16 +124,16 @@ def test_zero_update_checkpoint_batch_seed_change_and_viser(real_http_client):
     paused = wait_for(lambda: (i['result'] if (i := client.get(path).json()['interaction'])['result']
         and i['result']['command_seq'] == 1 else None), timeout=180)
     assert paused['status'] == 'applied' and paused['paused']
-    response = client.patch(path + '/display', json={'enabled': True})
+    response = client.patch(path + '/display', json={'viser': {'enabled': True}})
     assert response.status_code == 200, response.text
-    first = wait_for(lambda: (s if (s := client.get(path + '/display').json())['status'] == 'ready' else None), timeout=60)
+    first = wait_for(lambda: (s if (s := client.get(path + '/display').json()['viser'])['status'] == 'ready' else None), timeout=60)
     assert client.get(first['viewer_url']).is_success
     response = client.post(path + '/commands', json=dict(command_seq=2, command='step'))
     assert response.status_code == 200, response.text
     stepped = wait_for(lambda: (i['result'] if (i := client.get(path).json()['interaction'])['result']
         and i['result']['command_seq'] == 2 else None), timeout=30)
     assert stepped['steps'] == paused['steps'] + 1 and stepped['updates'] == 0
-    last = wait_for(lambda: (s if (s := client.get(path + '/display').json())['frame']['tick']
+    last = wait_for(lambda: (s if (s := client.get(path + '/display').json()['viser'])['frame']['tick']
                             > first['frame']['tick'] else None), timeout=30)
     assert last['frame']['decision'] == first['frame']['decision'] + 1
     assert client.post(path + '/cancel').status_code == 200

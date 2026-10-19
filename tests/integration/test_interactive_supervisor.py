@@ -160,12 +160,13 @@ def test_viewer_uses_same_pending_sequence_and_rejected_ack(live):
     supervisor, plan, _ = live
     with supervisor._lock:
         session = supervisor._display(plan.run_id)
-        session._viewer_event({'kind': 'command', 'command': 'reset_world', 'world_id': 1})
+        slot = session.slots['viser']
+        session._viewer_event(slot, {'kind': 'command', 'command': 'reset_world', 'world_id': 1})
         pending = supervisor.get_run(plan.run_id)['interaction']
         assert pending == {'command': cmd(1, 'reset_world', 1).model_dump(), 'result': None}
         assert session.snapshot()['interaction'] == pending
-        session._viewer_event({'kind': 'command', 'command': 'pause'})
-        error = json.loads(session.outgoing.splitlines()[-1])
+        session._viewer_event(slot, {'kind': 'command', 'command': 'pause'})
+        error = json.loads(slot.outgoing.splitlines()[-1])
         assert error['kind'] == 'command_error' and error['message']
         assert supervisor.get_run(plan.run_id)['interaction'] == pending
     result = wait_for(lambda: supervisor.get_run(plan.run_id)['interaction']['result'])
@@ -174,7 +175,7 @@ def test_viewer_uses_same_pending_sequence_and_rejected_ack(live):
     assert result == payload
     with supervisor._lock:
         assert session.snapshot()['interaction']['result'] == payload
-        session._viewer_event({'kind': 'command', 'command': 'pause'})
+        session._viewer_event(slot, {'kind': 'command', 'command': 'pause'})
         assert supervisor.get_run(plan.run_id)['interaction']['command'] == cmd(2).model_dump()
     wait_for(lambda: supervisor.get_run(plan.run_id)['interaction']['result'])
     assert supervisor.get_run(plan.run_id)['failure'] is None

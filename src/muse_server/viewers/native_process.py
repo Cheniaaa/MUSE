@@ -72,7 +72,7 @@ class NativeWindow:
     def _scroll(self, window, x, y):
         mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0., -.05 * y, self.camera)
 
-    def render(self) -> None:
+    def render(self) -> bool:
         glfw.make_context_current(self.window)
         width, height = glfw.get_framebuffer_size(self.window)
         if width > 0 and height > 0:
@@ -96,6 +96,7 @@ class NativeWindow:
                                viewport, text, '', self.context)
             glfw.swap_buffers(self.window)
         glfw.poll_events()
+        return width > 0 and height > 0
 
     def is_running(self) -> bool:
         return self.window is not None and not glfw.window_should_close(self.window)
@@ -109,3 +110,96 @@ class NativeWindow:
             glfw.destroy_window(self.window)
             self.window = None
         glfw.terminate()
+
+
+def main() -> int:
+    import argparse
+    import json
+    import os
+    from pathlib import Path
+    import socket
+    import sys
+    import time
+    import traceback
+
+    import numpy as np
+    from muse_sdk.run_protocol import PreviewSelection, drain_preview
+    from .scene_data import load_model
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--snapshot-fd', type=int, required=True)
+    parser.add_argument('--model', type=Path, required=True)
+    parser.add_argument('--sha256', required=True)
+    parser.add_argument('--nbody', type=int, required=True)
+    parser.add_argument('--run-id', required=True)
+    args = parser.parse_args()
+    sys.stdout.flush()
+    protocol_fd = os.dup(1)
+    os.dup2(2, 1)
+
+    def emit(message):
+        data = (json.dumps(message, allow_nan=False) + '\n').encode()
+        while data:
+            data = data[os.write(protocol_fd, data):]
+
+    window = None
+    sock = socket.socket(fileno=args.snapshot_fd)
+    sock.setblocking(False)
+    try:
+        model = load_model(args.model, args.sha256, args.nbody)
+        window = NativeWindow(model, title=f'MUSE Native | {args.run_id} | Read-only')
+        emit({'kind': 'loaded'})
+        os.set_blocking(0, False)
+        incoming = b''
+        state = cursor = presented = None
+        while window.is_running():
+            while True:
+                try:
+                    chunk = os.read(0, 65536)
+                except BlockingIOError:
+                    break
+                if not chunk:
+                    return 0
+                incoming += chunk
+                while b'\n' in incoming:
+                    line, incoming = incoming.split(b'\n', 1)
+                    updated = json.loads(line)['state']
+                    if state is None or (updated['selection_seq'], updated['effective_seq']) != (
+                            state['selection_seq'], state['effective_seq']):
+                        window.clear_frame()
+                        cursor = presented = None
+                    state = updated
+            if state is not None:
+                selection = PreviewSelection(selection_seq=state['effective_seq'], display=state['effective'])
+                latest = drain_preview(sock, run_id=args.run_id, selections={'native': selection}, scene_hash=args.sha256)
+                if 'native' in latest and state['selection_seq'] == state['effective_seq']:
+                    header, arrays = latest['native']
+                    key = header.episode, header.decision
+                    if cursor is None or key > cursor:
+                        if header.nbody != model.nbody:
+                            raise ValueError('Preview frame nbody mismatch')
+                        values = np.frombuffer(arrays, dtype='<f4')
+                        if not np.isfinite(values).all():
+                            raise ValueError('Nonfinite preview pose')
+                        window.update_frame(values[:model.nbody * 3].reshape(model.nbody, 3),
+                            values[model.nbody * 3:].reshape(model.nbody, 9), header.model_dump())
+                        cursor, presented = key, header
+            if window.render() and presented is not None:
+                emit({'kind': 'frame', 'header': presented.model_dump()})
+                presented = None
+            time.sleep(.01)
+        emit({'kind': 'closed'})
+        return 0
+    except Exception as exc:
+        traceback.print_exc(file=sys.stderr)
+        emit({'kind': 'error', 'message': str(exc)})
+        return 1
+    finally:
+        sock.close()
+        if window is not None:
+            window.close()
+        os.close(protocol_fd)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
