@@ -11,6 +11,7 @@ import tempfile
 from typing import Annotated, Literal
 from uuid import uuid4
 
+from anyio import CancelScope
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -18,12 +19,14 @@ from muse_sdk.config import ConfigError
 from muse_sdk.experiment import ExperimentRequest, ScenarioDefinition
 from muse_sdk.scene_edit import EnvironmentEdit, ScenePreviewRequest
 from muse_sdk.run_protocol import DisplayPatch, InteractiveCommand, RunRequest, RunTimeouts
+from muse_sdk.replay_protocol import ReplayRequest
 
 from .catalog import API_REVISION, Catalog
 from .resolver import resolve_experiment
 from .inspection import inspect_experiment
 from .run_data import read_log_page, read_metric_page
 from .previews import PreviewManager
+from .replays import ReplayManager
 from .storage import write_json_new
 from .supervisor import Supervisor, TERMINAL_STATES, process_identity, worker_command as default_worker_command
 
@@ -90,6 +93,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         app.state.instance_id = uuid4().hex
         supervisor.start()
         app.state.previews = PreviewManager(catalog)
+        app.state.replays = ReplayManager(catalog, supervisor)
         instance_path = catalog.directory / 'server-instance.json'
         published = False
         try:
@@ -104,13 +108,14 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
             yield
         finally:
             # 删除身份必须在清理完成之后、目录锁释放之前，避免删掉下一实例的文件。
-            previews_closed = False
+            viewers_closed = False
             try:
+                await asyncio.to_thread(app.state.replays.shutdown)
                 await asyncio.to_thread(app.state.previews.shutdown)
-                previews_closed = True
+                viewers_closed = True
             finally:
                 await asyncio.to_thread(supervisor.close,
-                    before_unlock=instance_path.unlink if published and previews_closed else None)
+                    before_unlock=instance_path.unlink if published and viewers_closed else None)
 
     app = FastAPI(title='Muse M1', lifespan=lifespan)
 
@@ -142,7 +147,60 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         return {'api_revision': API_REVISION, 'experiment_request': ExperimentRequest.model_json_schema(),
                 'scenario': ScenarioDefinition.model_json_schema(), 'run_request': RunRequest.model_json_schema(),
                 'environment_edit': EnvironmentEdit.model_json_schema(),
-                'preview_request': ScenePreviewRequest.model_json_schema()}
+                'preview_request': ScenePreviewRequest.model_json_schema(),
+                'replay_request': ReplayRequest.model_json_schema()}
+
+    @app.post('/replays', status_code=201)
+    def create_replay(request: ReplayRequest):
+        return app.state.replays.create(request)
+
+    @app.get('/replays/{session_id}')
+    def get_replay(session_id: str):
+        return app.state.replays.get(session_id)
+
+    @app.delete('/replays/{session_id}', status_code=204)
+    def close_replay(session_id: str):
+        app.state.replays.close(session_id)
+
+    @app.websocket('/streams/replays/{session_id}')
+    async def replay_control(websocket: WebSocket, session_id: str):
+        replays = app.state.replays
+        try:
+            replays.attach(session_id)
+        except (KeyError, ConfigError):
+            await websocket.close(code=1008)
+            return
+        previous = None
+        try:
+            await websocket.accept()
+            while True:
+                state = replays.get(session_id)
+                if state != previous:
+                    await websocket.send_json({'kind': 'state', **state})
+                    previous = state
+                for event in replays.events(session_id):
+                    await websocket.send_json(event)
+                if state['status'] == 'error':
+                    await websocket.close(code=1011)
+                    return
+                try:
+                    message = await asyncio.wait_for(websocket.receive_json(), timeout=.05)
+                    await asyncio.to_thread(replays.control, session_id, message)
+                except asyncio.TimeoutError:
+                    pass
+        except WebSocketDisconnect:
+            return
+        except KeyError:
+            await websocket.close(code=1000)
+            return
+        finally:
+            # ASGI任务取消不能跳过已取得所有权的进程回收。
+            with CancelScope(shield=True):
+                try:
+                    await asyncio.to_thread(replays.close, session_id)
+                except KeyError:
+                    # 显式DELETE可能先于WS断开完成；会话已由同一owner回收。
+                    pass
 
     @app.get('/catalog/environments/{resource_id}/{revision}/editing')
     def environment_editing(resource_id: str, revision: int):
