@@ -86,6 +86,68 @@ def test_unattached_preview_expires(pipeline, tmp_path):
         manager.shutdown()
 
 
+@pytest.mark.parametrize('failure', ['exit', 'protocol'])
+def test_terminated_preview_rejects_updates_and_can_be_deleted(pipeline, failure):
+    from fastapi.testclient import TestClient
+    from muse_server.app import create_app
+    from muse_server.previews import PreviewManager
+    from muse_server.supervisor import process_identity
+
+    child = '''import json, sys
+json.loads(sys.stdin.readline())
+if sys.argv[1] == 'exit':
+    sys.exit(17)
+print(json.dumps({'kind': 'invalid-event'}), flush=True)
+sys.stdin.read()
+'''
+    app = create_app(pipeline[0].directory, viewer_port=0)
+    with TestClient(app) as client:
+        app.state.previews = PreviewManager(app.state.catalog,
+            process_command=lambda identity: [sys.executable, '-c', child, failure])
+        created = client.post('/previews', json=draft_request(pipeline))
+        assert created.status_code == 201, created.text
+        identity = created.json()['session_id']
+        session = app.state.previews._sessions[identity]
+        pid, directory = session.process.pid, Path(session.temporary.name)
+        wait_for(lambda: client.get('/previews/' + identity).json()['status'] == 'error')
+        original = client.get('/previews/' + identity).json()
+        try:
+            response = client.put('/previews/' + identity, json=draft_request(pipeline, 2))
+            assert response.status_code == 422, response.text
+            assert response.json()['errors'][0]['field'] == 'session_id'
+            assert client.get('/previews/' + identity).json() == original
+        finally:
+            assert client.delete('/previews/' + identity).status_code == 204
+        assert process_identity(pid) is None
+        assert not directory.exists()
+        assert client.get('/previews/' + identity).status_code == 404
+
+
+def test_compile_error_keeps_preview_available_for_corrected_revision(pipeline):
+    from muse_server.previews import PreviewManager
+
+    child = '''import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    revision = message['request']['revision']
+    result = ({'kind': 'error', 'message': 'compile rejected'} if revision == 1 else
+              {'kind': 'ready', 'viewer_url': 'http://127.0.0.1:1234', 'objects': []})
+    print(json.dumps(dict(result, revision=revision)), flush=True)
+'''
+    manager = PreviewManager(pipeline[0],
+        process_command=lambda identity: [sys.executable, '-c', child])
+    try:
+        identity = manager.create(draft_request(pipeline))['session_id']
+        manager.attach(identity)
+        wait_for(lambda: manager.get(identity)['status'] == 'error')
+        manager.update(identity, draft_request(pipeline, 2))
+        wait_for(lambda: manager.get(identity)['status'] == 'ready')
+        assert manager.get(identity)['applied_revision'] == 2
+        assert manager.get(identity)['error'] is None
+    finally:
+        manager.shutdown()
+
+
 def test_view_intent_overtaken_by_http_compile_returns_current_state(pipeline, tmp_path):
     from fastapi.testclient import TestClient
     from muse_server.app import create_app

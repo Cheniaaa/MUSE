@@ -35,6 +35,7 @@ class _Session:
     pending: tuple | None = None
     attached: bool = False
     closed: bool = False
+    terminated: bool = False
     events: deque = field(default_factory=deque)
     cleanup_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -133,6 +134,8 @@ class PreviewManager:
             session = self._sessions[identity]
             if session.closed:
                 raise ConfigError('session_id', 'Preview session is closing')
+            if session.terminated:
+                raise ConfigError('session_id', 'Preview session terminated; recreate it: ' + session.state['error'])
             if resolved[0]['draft_id'] != session.draft_id or resolved[0]['revision'] <= session.requested_revision:
                 raise ConfigError('revision', 'Preview update requires the same draft and a newer revision')
             session.requested_revision = resolved[0]['revision']
@@ -190,10 +193,14 @@ class PreviewManager:
             code = session.process.wait()
             with self._lock:
                 if not session.closed:
+                    session.terminated = True
+                    session.inflight = session.pending = None
                     session.state.update(status='error', error=f'Preview process exited {code}')
         except (OSError, ValueError, KeyError) as exc:
             with self._lock:
                 if not session.closed:
+                    session.terminated = True
+                    session.inflight = session.pending = None
                     session.state.update(status='error', error=str(exc))
         finally:
             session.process.stdout.close()

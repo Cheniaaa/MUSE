@@ -110,8 +110,10 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
             # 删除身份必须在清理完成之后、目录锁释放之前，避免删掉下一实例的文件。
             viewers_closed = False
             try:
-                await asyncio.to_thread(app.state.replays.shutdown)
-                await asyncio.to_thread(app.state.previews.shutdown)
+                try:
+                    await asyncio.to_thread(app.state.replays.shutdown)
+                finally:
+                    await asyncio.to_thread(app.state.previews.shutdown)
                 viewers_closed = True
             finally:
                 await asyncio.to_thread(supervisor.close,
