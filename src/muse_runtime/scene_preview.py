@@ -12,7 +12,7 @@ from muse_sdk.scene_edit import EnvironmentEdit, PreviewEntity
 from muse_sdk.view_protocol import SceneObject
 
 from .environment_edit import derive_environment, inspect_editable_environment
-from .preview import export_model
+from .scene_snapshot import export_model
 from .scene import entity_name, make_scene_config
 
 
