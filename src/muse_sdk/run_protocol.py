@@ -6,6 +6,7 @@ import struct
 from pydantic import Field, field_validator, model_validator
 
 from .config import DataModel, check_json
+from .recording_protocol import RecordingConfig
 
 
 class RunTimeouts(DataModel):
@@ -47,7 +48,8 @@ class WorkerEvent(DataModel):
     event_seq: int = Field(gt=0)
     run_id: str
     kind: Literal['preparing', 'compiling', 'running', 'heartbeat', 'metric', 'failure', 'terminal',
-                  'preview_model', 'preview_applied', 'preview_error', 'checkpoint', 'command_result']
+                  'preview_model', 'preview_applied', 'preview_error', 'checkpoint', 'command_result',
+                  'recording_state', 'trajectory']
     sim_time: float = Field(ge=0)
     wall_time: float = Field(ge=0)
     payload: dict = Field(default_factory=dict)
@@ -80,6 +82,7 @@ class RunRequest(DataModel):
     max_decision_steps: int = Field(gt=0, description='本次运行的决策步数上限；一次同时推进全部world，不乘world数，不计内部物理子步')
     checkpoint_artifact_id: str | None = None
     checkpoint_interval_updates: int | None = Field(default=None, gt=0)
+    recording: RecordingConfig | None = None
 
     @model_validator(mode='after')
     def saving_requires_training(self):

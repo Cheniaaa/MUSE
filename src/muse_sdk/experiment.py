@@ -9,6 +9,7 @@ from .selection import ResolvedSelection
 from .geometry import EnvironmentRF, GeometrySelection, RadioDeviceDefinition, ResolvedGeometry
 from .network import BoundModel, NetworkSelection, NetworkSpec
 from .run_protocol import CheckpointReference, RunTimeouts
+from .recording_protocol import RecordingConfig
 
 
 class ResourceRef(DataModel):
@@ -306,6 +307,7 @@ class RunPlan(DataModel):
     timeouts: RunTimeouts = Field(default_factory=RunTimeouts)
     checkpoint: CheckpointReference | None = None
     checkpoint_interval_updates: int | None = Field(default=None, gt=0)
+    recording: RecordingConfig | None = None
 
 
 class BuiltinMetadata(DataModel):

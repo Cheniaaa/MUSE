@@ -14,6 +14,7 @@ from muse_sdk.config import ConfigError
 from muse_sdk.geometry import GeometryAssetSummary
 from muse_sdk.descriptor import parse_descriptor_json
 from muse_sdk.run_protocol import CheckpointArtifact, CheckpointReference, RunTimeouts
+from muse_sdk.recording_protocol import RecordingConfig
 from muse_sdk.scene_edit import EnvironmentEdit, EnvironmentManifest
 from muse_sdk.experiment import (
     BuiltinMetadata, CatalogSnapshot, EnvironmentBundle, ExperimentDefinition, ResourceRecord, ResourceRef, RunPlan,
@@ -250,8 +251,13 @@ class Catalog:
     def create_run_plan(self, experiment_id: str, *, mode: str, device: str,
                         checkpoint_artifact_id: str | None = None, max_decision_steps: int = 24000,
                         checkpoint_interval_updates: int | None = None,
+                        recording: RecordingConfig | dict | None = None,
                         timeouts: RunTimeouts | None = None) -> RunPlan:
         experiment = self.get_experiment(experiment_id)
+        if recording is not None:
+            recording = RecordingConfig.model_validate(recording)
+            if max(recording.world_ids) >= experiment.topology.world_count:
+                raise ConfigError('recording.world_ids', 'Recording world is outside Experiment topology')
         if type(max_decision_steps) is not int or max_decision_steps <= 0:
             raise ConfigError('max_decision_steps', 'Expected a positive integer decision budget')
         if mode not in ('TRAIN', 'EVALUATE', 'INTERACTIVE'):
@@ -289,7 +295,8 @@ class Catalog:
         plan = RunPlan(run_id=run_id, experiment_id=experiment_id, mode=mode, device=device,
                        platform_revision=experiment.platform_revision, artifact_directory=str(directory),
                        resource_paths=paths, experiment=experiment, max_decision_steps=max_decision_steps,
-                       checkpoint=checkpoint, checkpoint_interval_updates=checkpoint_interval_updates,
-                       timeouts=timeouts or RunTimeouts())
+                        checkpoint=checkpoint, checkpoint_interval_updates=checkpoint_interval_updates,
+                        recording=recording,
+                        timeouts=timeouts or RunTimeouts())
         write_json_new(directory / 'resolved_run_plan.json', plan.model_dump_json(indent=2))
         return plan

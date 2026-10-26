@@ -36,6 +36,56 @@ def checkpoint_plan(pipeline, tmp_path):
                    resource_paths={}, experiment=exp, max_decision_steps=8)
 
 
+@pytest.fixture
+def recording_source(checkpoint_plan):
+    import hashlib
+    import mujoco
+    from muse_sdk.recording_protocol import RecordingConfig
+    from muse_sdk.run_protocol import PreviewModel, SceneObject
+    plan = checkpoint_plan
+    plan.recording = RecordingConfig(world_ids=[0, 1], every_n_decisions=3, max_data_bytes=65536)
+    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+      <geom type="plane" size="5 5 .1" pos=".5 0 0"/>
+      <body pos="0 0 1"><freejoint/><geom size=".1"/></body>
+      <body pos="0 1 1"><freejoint/><geom size=".1"/></body>
+      <body pos="0 -1 1"><freejoint/><geom size=".1"/></body>
+    </worldbody></mujoco>''')
+    path = Path(plan.artifact_directory) / 'preview.mjb'
+    mujoco.mj_saveModel(model, filename=str(path))
+    objects, body = [], 1
+    for role, binding in plan.experiment.bindings.items():
+        for slot in binding.role_slot_to_group_slot:
+            objects.append(SceneObject(object_id=f'{binding.group_id}:{slot}', label=role,
+                kind='entity', group_id=binding.group_id, group_slot=slot, role_id=role,
+                model_id=binding.model_id, body_id=body, geom_ids=[body]))
+            body += 1
+    objects.append(SceneObject(object_id='floor', label='地面', kind='environment',
+        group_id=None, group_slot=None, role_id=None, model_id=None, body_id=0, geom_ids=[0],
+        local_position=[.5, 0., 0.], local_orientation_matrix=[1., 0., 0., 0., 1., 0., 0., 0., 1.]))
+    return plan, PreviewModel(path=path.name, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        nbody=model.nbody, native_payload_floats=1, objects=objects)
+
+
+@pytest.fixture
+def recorded_trajectory(recording_source):
+    from muse_sdk.trajectory import TrajectoryWriter
+    from recording_helpers import sample_values
+    plan, model = recording_source
+    writer = TrajectoryWriter(plan, model)
+    try:
+        for world in plan.recording.world_ids:
+            for sample, (run, episode, decision, phase, reset) in enumerate([
+                (0, 0, 0, 0, 0), (3, 0, 3, 1, 0), (6, 0, 6, 1, 0),
+                (7, 0, 7, 1, 0), (7, 1, 0, 3, 1), (10, 1, 3, 1, 0),
+                (13, 1, 6, 1, 0), (14, 1, 7, 1, 0), (14, 2, 0, 3, 1),
+            ]):
+                writer.append(world, (sample, run, episode, decision, decision * 20, phase, reset),
+                    sample_values(writer.fields, step=run, terminal=sample in (3, 7)))
+        return writer.seal('completed', 14)
+    finally:
+        writer.close()
+
+
 @pytest.fixture(scope='session', autouse=True)
 def project_source_environment():
     with pytest.MonkeyPatch.context() as patch:

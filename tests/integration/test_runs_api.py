@@ -79,6 +79,22 @@ def client(tmp_path):
         yield client
 
 
+def test_recording_config_frozen_and_world_bound_checked(client):
+    experiment_id, definition = register_experiment(client)
+    config = {'world_ids': [1, 0], 'every_n_decisions': 3, 'max_data_bytes': 65536}
+    request = {'experiment_id': experiment_id, 'mode': 'EVALUATE', 'max_decision_steps': 3,
+               'recording': config}
+    response = client.post('/runs', json=request)
+    assert response.status_code == 201, response.text
+    run_id = response.json()['run_id']
+    frozen = client.app.state.supervisor.get_plan(run_id)
+    assert frozen.recording.model_dump() == config
+    assert 'recording' not in definition
+    request['recording']['world_ids'] = [definition['topology']['world_count']]
+    response = client.post('/runs', json=request)
+    assert response.status_code == 422, response.text
+
+
 @pytest.fixture
 def real_http_client(tmp_path):
     """复用真实 Server/Worker HTTP 入口；退出时关闭服务及其子进程。"""
