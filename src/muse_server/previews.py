@@ -204,7 +204,7 @@ class PreviewManager:
                     session.terminated = True
                     session.inflight = session.pending = None
                     session.state.update(status='error', error=f'Preview process exited {code}')
-        except (OSError, ValueError, KeyError) as exc:
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             with self._lock:
                 if not session.closed:
                     session.terminated = True

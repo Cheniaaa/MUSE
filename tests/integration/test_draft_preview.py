@@ -88,7 +88,7 @@ def test_unattached_preview_expires(pipeline, tmp_path):
         manager.shutdown()
 
 
-@pytest.mark.parametrize('failure', ['exit', 'protocol'])
+@pytest.mark.parametrize('failure', ['exit', 'protocol', 'null', 'array'])
 def test_terminated_preview_rejects_updates_and_can_be_deleted(pipeline, failure):
     from fastapi.testclient import TestClient
     from muse_server.app import create_app
@@ -99,7 +99,7 @@ def test_terminated_preview_rejects_updates_and_can_be_deleted(pipeline, failure
 json.loads(sys.stdin.readline())
 if sys.argv[1] == 'exit':
     sys.exit(17)
-print(json.dumps({'kind': 'invalid-event'}), flush=True)
+print(json.dumps({'protocol': {'kind': 'invalid-event'}, 'null': None, 'array': []}[sys.argv[1]]), flush=True)
 sys.stdin.read()
 '''
     app = create_app(pipeline[0].directory, viewer_port=0)
@@ -111,8 +111,10 @@ sys.stdin.read()
         identity = created.json()['session_id']
         session = app.state.previews._sessions[identity]
         pid, directory = session.process.pid, Path(session.temporary.name)
-        wait_for(lambda: client.get('/previews/' + identity).json()['status'] == 'error')
+        session.reader.join(timeout=5.)
+        assert not session.reader.is_alive()
         original = client.get('/previews/' + identity).json()
+        assert original['status'] == 'error' and original['error']
         try:
             response = client.put('/previews/' + identity, json=draft_request(pipeline, 2))
             assert response.status_code == 422, response.text
