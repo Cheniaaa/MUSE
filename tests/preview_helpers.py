@@ -2,6 +2,12 @@
 from muse_sdk.run_protocol import DisplaySettings, PreviewSelection, PreviewSelections, WorkerControl
 
 
+def preview_model(env, directory):
+    from muse_runtime.scene_snapshot import export_model, scene_objects
+    return export_model(env.sim.mj_model, directory,
+                        objects=scene_objects(env.experiment, env.scene, env.sim.mj_model))
+
+
 def preview_control(run_id, seq, *, world=0, rate=10., enabled=True):
     return WorkerControl(run_id=run_id, kind='preview', preview=PreviewSelections(
         viser=PreviewSelection(selection_seq=seq,

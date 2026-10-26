@@ -57,7 +57,7 @@ def compiled_run(tmp_path):
 
 
 def test_run_objects_cover_actual_geoms_and_frozen_group_role_identity(compiled_run):
-    from muse_runtime.preview import scene_objects
+    from muse_runtime.scene_snapshot import scene_objects
 
     experiment, scene, model = compiled_run
     objects = scene_objects(experiment, scene, model)
@@ -85,7 +85,7 @@ def test_run_objects_cover_actual_geoms_and_frozen_group_role_identity(compiled_
 
 
 def test_local_geom_transform_projects_two_body_frames_without_false_world_zero(compiled_run):
-    from muse_runtime.preview import scene_objects
+    from muse_runtime.scene_snapshot import scene_objects
 
     experiment, scene, model = compiled_run
     objects = scene_objects(experiment, scene, model)
@@ -120,6 +120,7 @@ def test_local_geom_transform_projects_two_body_frames_without_false_world_zero(
 def test_worker_exports_real_objects_once_and_sidecar_survives_without_runtime(compiled_run, tmp_path, monkeypatch):
     import torch
     from muse_runtime.preview import WorkerPreview
+    from preview_helpers import preview_model
     from muse_sdk.run_protocol import preview_socketpair
 
     experiment, scene, model = compiled_run
@@ -135,7 +136,8 @@ def test_worker_exports_real_objects_once_and_sidecar_survives_without_runtime(c
     events = []
     sender, receiver = preview_socketpair()
     try:
-        preview = WorkerPreview('run', env, tmp_path, sender, lambda kind, payload: events.append((kind, payload)))
+        preview = WorkerPreview('run', env, sender, lambda kind, payload: events.append((kind, payload)),
+                                model=preview_model(env, tmp_path))
     finally:
         sender.close()
         receiver.close()
@@ -162,7 +164,7 @@ print('STATIC_OBJECTS_OK')
 
 def test_real_frozen_plan_objects_from_compiled_scene(pipeline):
     from mjlab.scene import Scene
-    from muse_runtime.preview import scene_objects
+    from muse_runtime.scene_snapshot import scene_objects
     from muse_runtime.scene import assemble_scene
     from muse_server.resolver import resolve_experiment
 

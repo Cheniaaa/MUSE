@@ -179,7 +179,7 @@ def test_browser_click_and_qt_click_report_the_current_dynamic_frame(native_scen
 
 
 def test_real_viewer_process_consumes_sidecar_routes_errors_and_filters_frames(tmp_path):
-    from muse_runtime.preview import export_model
+    from muse_runtime.scene_snapshot import export_model
     from muse_sdk.run_protocol import PreviewFrame, encode_preview, preview_socketpair
 
     model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody><body name="probe" pos="0 0 1">

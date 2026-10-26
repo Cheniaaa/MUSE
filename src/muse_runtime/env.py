@@ -57,6 +57,7 @@ def on_torch_stream(method):
 class MuseEnv(ManagerBasedRlEnv):
     def __init__(self, experiment, context: RuntimeContext, rng):
         self.experiment, self.context, self.rng = experiment, context, rng
+        self.recorder = None
         self.term_registry = {f'builtin:{name}': reg for name, reg in registrations().items()}
         self.term_registry.update(context.term_registry)
         scene, sim = assemble_scene(experiment, context.resource_paths)
@@ -246,12 +247,14 @@ class MuseEnv(ManagerBasedRlEnv):
 
     @torch.no_grad()
     @on_torch_stream
-    def reset(self, world_mask):
+    def reset(self, world_mask, *, automatic=False):
         if world_mask.dtype != torch.bool or tuple(world_mask.shape) != (self.num_envs,):
             raise ValueError('reset requires bool world mask [B]')
         ids = world_mask.nonzero().flatten()
         if not len(ids):
             return self.policy_input
+        if self.recorder is not None:
+            self.recorder.before_reset(world_mask, automatic=automatic)
         self.sim.reset(ids)
         self.scene.reset(ids)
         self.sim.forward()
@@ -284,6 +287,8 @@ class MuseEnv(ManagerBasedRlEnv):
         if self.world_reward_manager is not None:
             self.extras['log'].update(self.world_reward_manager.reset(ids))
         self.policy_input = PolicyInput(self._observe(ids), self.role_masks)
+        if self.recorder is not None:
+            self.recorder.after_reset(world_mask, automatic=automatic)
         return self.policy_input
 
     @torch.no_grad()
@@ -291,6 +296,8 @@ class MuseEnv(ManagerBasedRlEnv):
     def step(self, role_actions):
         self._check_physics()
         packed = encode_actions(self.experiment, role_actions, self.device)
+        if self.recorder is not None:
+            self.recorder.before_step()
         self.act_role_masks = snapshot(self.role_masks)
         for role, target in self.commands.target_world.items():
             self.act_commands.target_world[role].copy_(target)
@@ -360,6 +367,8 @@ class MuseEnv(ManagerBasedRlEnv):
         transition = TransitionView(self.act_role_masks, snapshot(observations), snapshot(rewards), snapshot(world_reward),
             terminated, truncated.clone(), reason, snapshot(self.learning_done), reset.clone(), snapshot(costs),
             snapshot(self.wireless.snapshot()) if self.wireless is not None else None)
+        if self.recorder is not None:
+            self.recorder.after_step(role_actions, transition)
         self.extras['log'] = {}
         self.policy_input = PolicyInput(observations, self.role_masks)
         if reset.any():
@@ -368,7 +377,7 @@ class MuseEnv(ManagerBasedRlEnv):
             diagnostics['control_saturation'] = {
                 group: float((self.action_manager.get_term(group).saturation_count[reset] / ticks).mean())
                 for group in self._motion_groups}
-            self.reset(reset)
+            self.reset(reset, automatic=True)
         diagnostics.update(self.extras['log'])
         return StepOutput(self.policy_input.observations, self.policy_input.role_masks, transition, diagnostics)
 

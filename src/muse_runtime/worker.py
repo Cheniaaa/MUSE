@@ -50,17 +50,36 @@ def execute(plan, protocol):
             protocol.emit('compiling')
             env = MuseEnv(experiment, context, rng)
             preview_socket = None
+            recorder = None
             try:
                 from .preview import WorkerPreview
+                from .scene_snapshot import export_model, scene_objects
                 preview_socket = socket.socket(fileno=int(os.environ['MUSE_PREVIEW_FD']))
                 preview_socket.setblocking(False)
-                preview = WorkerPreview(plan.run_id, env, plan.artifact_directory, preview_socket, protocol.emit)
+                model, model_error = None, None
+                # 唯一冷模型导出边界；请求录制时错误必须进入Run failure。
+                try:
+                    model = export_model(env.sim.mj_model, plan.artifact_directory,
+                        objects=scene_objects(experiment, env.scene, env.sim.mj_model))
+                except Exception as exc:
+                    if plan.recording is not None:
+                        raise
+                    model_error = str(exc)
+                preview = WorkerPreview(plan.run_id, env, preview_socket,
+                    protocol.emit, model=model)
+                if model_error is not None:
+                    preview.fail(model_error)
                 algorithms = {f'builtin:{name}': implementation for name, implementation in algorithm_registrations().items()}
                 algorithms.update(package.definition.algorithms)
                 algorithm = algorithms[experiment.algorithm_id](experiment.algorithm_config)
                 algorithm.initialize(experiment, context, rng)
                 if plan.checkpoint is not None:
                     load_checkpoint(plan, algorithm)
+                if plan.recording is not None:
+                    from .recording import RuntimeRecorder
+                    recorder = RuntimeRecorder(plan, env, model, protocol.emit)
+                    env.recorder = recorder
+                    recorder.start()
                 protocol.emit('running')
 
                 def json_value(value):
@@ -104,10 +123,14 @@ def execute(plan, protocol):
                              if experiment.training_schedule else None, max_decision_steps=plan.max_decision_steps,
                              checkpoint_sink=checkpoint_sink,
                              checkpoint_interval_updates=plan.checkpoint_interval_updates,
-                             command_reader=protocol.take_command)
+                              command_reader=protocol.take_command)
+                if recorder is not None:
+                    recorder.finish('cancelled' if result['state'] == 'CANCELLED' else 'completed')
                 stream.synchronize()
                 return result
             finally:
+                if recorder is not None:
+                    recorder.close()
                 if preview_socket is not None:
                     preview_socket.close()
                 env.close()

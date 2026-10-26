@@ -3,7 +3,7 @@ import pytest
 import torch
 
 from test_flight_env import flight_env, flight_plan, actions
-from preview_helpers import preview_control
+from preview_helpers import preview_control, preview_model
 
 
 def test_final_three_vehicle_model_snapshot_mapping_and_disabled(flight_env, tmp_path):
@@ -13,7 +13,8 @@ def test_final_three_vehicle_model_snapshot_mapping_and_disabled(flight_env, tmp
     env = flight_env
     events = []
     sender, receiver = preview_socketpair()
-    preview = WorkerPreview('r', env, tmp_path, sender, lambda kind, payload: events.append((kind, payload)))
+    preview = WorkerPreview('r', env, sender, lambda kind, payload: events.append((kind, payload)),
+                            model=preview_model(env, tmp_path))
     try:
         preview.sample()
         with pytest.raises(BlockingIOError):
@@ -103,19 +104,15 @@ def test_preview_export_failure_isolated_but_gpu_copy_error_propagates(flight_en
     env = flight_env
     sender, receiver = preview_socketpair()
     events = []
-    original = module.export_model
     try:
-        def broken_export(*args, **kwargs):
-            raise OSError('export denied')
-        monkeypatch.setattr(module, 'export_model', broken_export)
-        preview = module.WorkerPreview('r', env, tmp_path, sender, lambda *args: events.append(args))
+        preview = module.WorkerPreview('r', env, sender, lambda *args: events.append(args), model=None)
+        preview.fail('export denied')
         assert preview.error == 'export denied'
         assert events[-1][0] == 'preview_error'
         env.step(actions(env, 0.))
         preview.after_step()
         preview.sample(force=True)
-        monkeypatch.setattr(module, 'export_model', original)
-        preview = module.WorkerPreview('r', env, tmp_path, sender, lambda *args: None)
+        preview = module.WorkerPreview('r', env, sender, lambda *args: None, model=preview_model(env, tmp_path))
         preview.apply(preview_control('r', 1, rate=30.))
         def gpu_error(*args):
             raise RuntimeError('CUDA failure')
@@ -132,7 +129,7 @@ def test_episode_reset_zero_pairs_with_new_episode(flight_env, tmp_path):
     from muse_sdk.run_protocol import preview_socketpair, drain_preview
     env = flight_env
     sender, receiver = preview_socketpair()
-    preview = WorkerPreview('r', env, tmp_path, sender, lambda *args: None)
+    preview = WorkerPreview('r', env, sender, lambda *args: None, model=preview_model(env, tmp_path))
     try:
         preview.apply(preview_control('r', 1, rate=30.))
         env.step(actions(env, 0.))
@@ -162,7 +159,7 @@ def test_dual_preview_same_world_copy_and_reset(flight_env, tmp_path, monkeypatc
 
     env = flight_env
     sender, receiver = preview_socketpair()
-    preview = WorkerPreview('dual', env, tmp_path, sender, lambda *_: None)
+    preview = WorkerPreview('dual', env, sender, lambda *_: None, model=preview_model(env, tmp_path))
     control = preview_control('dual', 1, world=1)
     control.preview.native = PreviewSelection(selection_seq=2, display=control.preview.viser.display.model_copy())
     try:
@@ -255,7 +252,7 @@ def test_native_snapshot_samples_only_selected_world(flight_env, tmp_path, monke
     from muse_sdk.run_protocol import PreviewSelection, preview_socketpair, drain_preview
     env = flight_env
     sender, receiver = preview_socketpair()
-    preview = WorkerPreview('native', env, tmp_path, sender, lambda *_: None)
+    preview = WorkerPreview('native', env, sender, lambda *_: None, model=preview_model(env, tmp_path))
     control = preview_control('native', 1, enabled=False)
     control.preview.native = PreviewSelection(selection_seq=1,
         display=control.preview.viser.display.model_copy(update={'enabled': True, 'world_id': 1}))

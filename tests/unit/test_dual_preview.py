@@ -45,6 +45,7 @@ def test_worker_model_export_does_not_reject_disabled_large_native(tmp_path):
     import mujoco
     from types import SimpleNamespace as NS
     from muse_runtime.preview import WorkerPreview
+    from preview_helpers import preview_model
 
     # userdata并非payload；大量原生user sensor令Native超限，Viser仍只有一个body。
     model = mujoco.MjModel.from_xml_string('<mujoco><sensor><user name="large" dim="40000"'
@@ -54,7 +55,7 @@ def test_worker_model_export_does_not_reject_disabled_large_native(tmp_path):
         sim=NS(mj_model=model), scene=NS(spec=NS(geoms=[])))
     sender, receiver = wire.preview_socketpair()
     try:
-        preview = WorkerPreview('run', env, tmp_path, sender, lambda *_: None)
+        preview = WorkerPreview('run', env, sender, lambda *_: None, model=preview_model(env, tmp_path))
         assert preview.error is None and preview.model.native_payload_floats == 40006
         preview.sample(force=True)
         with pytest.raises(BlockingIOError):
@@ -145,13 +146,12 @@ def test_worker_two_slots_bound_backlog_and_reset(monkeypatch, tmp_path):
                      qfrc_applied=torch.ones(2, 1), xfrc_applied=torch.ones(2, 1024, 6),
                      sensordata=torch.ones(2, 1))), scene=None,
              episode_length_buf=torch.tensor([5, 8]), cfg=NS(decimation=2), physics_dt=.01)
-    monkeypatch.setattr(module, 'scene_objects', lambda *_: [])
-    monkeypatch.setattr(module, 'export_model', lambda *_, **__: wire.PreviewModel(
-        path='preview.mjb', sha256='a' * 64, nbody=1024, native_payload_floats=6149, objects=[]))
+    model = wire.PreviewModel(path='preview.mjb', sha256='a' * 64, nbody=1024,
+                              native_payload_floats=6149, objects=[])
     monkeypatch.setattr(torch.cuda, 'current_stream', lambda _: NS(synchronize=lambda: None))
     events = []
     try:
-        preview = module.WorkerPreview('run', env, tmp_path, sender, lambda k, p: events.append((k, p)))
+        preview = module.WorkerPreview('run', env, sender, lambda k, p: events.append((k, p)), model=model)
         choices = wire.PreviewSelections(**{name: wire.PreviewSelection(selection_seq=1,
             display=wire.DisplaySettings(enabled=True, world_id=world, rate_hz=30))
             for name, world in [('viser', 0), ('native', 1)]})

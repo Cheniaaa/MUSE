@@ -355,7 +355,7 @@ def test_official_native_process_syncs_and_exits(tmp_path, exit_kind):
     import select
     import subprocess
     import mujoco
-    from muse_runtime.preview import export_model
+    from muse_runtime.scene_snapshot import export_model
     from muse_sdk.run_protocol import PreviewFrame, encode_preview, preview_socketpair
 
     model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><body><freejoint/>'

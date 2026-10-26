@@ -217,8 +217,9 @@ def test_worker_routes_ack_and_services_preview_while_paused(monkeypatch, cancel
     monkeypatch.setattr(torch.cuda, 'Stream', lambda **_: stream)
     monkeypatch.setattr(torch.cuda, 'stream', lambda _: nullcontext())
     monkeypatch.setattr(torch.cuda, 'current_stream', lambda _: stream)
-    monkeypatch.setattr(preview, 'scene_objects', lambda *_: [])
-    monkeypatch.setattr(preview, 'export_model', lambda *_, **__:
+    from muse_runtime import scene_snapshot
+    monkeypatch.setattr(scene_snapshot, 'scene_objects', lambda *_: [])
+    monkeypatch.setattr(scene_snapshot, 'export_model', lambda *_, **__:
         wire.PreviewModel(path='preview.mjb', sha256='a' * 64, nbody=1, native_payload_floats=6, objects=[]))
     monkeypatch.setenv('MUSE_PREVIEW_FD', '999')
     monkeypatch.setattr(worker.socket, 'socket', lambda **_: NS(setblocking=lambda _: None,
@@ -239,7 +240,7 @@ def test_worker_routes_ack_and_services_preview_while_paused(monkeypatch, cancel
         take_preview_controls=lambda: [selections.popleft()] if selections else [])
     plan = NS(experiment=experiment, device='cuda:0', run_id='run', mode='INTERACTIVE',
         artifact_directory='unused', resource_paths={'environment': 'env', 'training_package': 'pkg'},
-        checkpoint=None, max_decision_steps=10, checkpoint_interval_updates=None)
+        checkpoint=None, max_decision_steps=10, checkpoint_interval_updates=None, recording=None)
     result = worker.execute(plan, protocol)
     if cancel_immediately:
         assert result == {'state': 'CANCELLED', 'steps': 0, 'updates': 0}

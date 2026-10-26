@@ -109,7 +109,7 @@ import numpy as np
 from muse_sdk.experiment import RunPlan
 from muse_sdk.run_protocol import PreviewFrame, encode_preview, send_preview
 from muse_runtime.protocol import WorkerProtocol
-from muse_runtime.preview import export_model
+from muse_runtime.scene_snapshot import export_model
 from muse_sdk.view_protocol import SceneObject
 plan = RunPlan.model_validate_json(Path(sys.argv[1]).read_text())
 p = WorkerProtocol(plan.run_id)
@@ -234,7 +234,7 @@ def test_invalid_patch_is_atomic_and_timeout_late_ack_is_actual(display_run):
 
 def test_model_hash_nbody_and_capacity_fail_explicitly(tmp_path):
     import mujoco
-    from muse_runtime.preview import export_model
+    from muse_runtime.scene_snapshot import export_model
     from muse_server.viewers.scene_data import load_model
     from muse_sdk.run_protocol import preview_socketpair, check_preview_capacity
     model = mujoco.MjModel.from_xml_string('<mujoco/>')
@@ -367,7 +367,7 @@ def test_paused_real_viewer_drains_to_latest_current_selection(tmp_path):
     import signal
     import select
     import mujoco
-    from muse_runtime.preview import export_model
+    from muse_runtime.scene_snapshot import export_model
     from muse_sdk.view_protocol import SceneObject
     from muse_sdk.run_protocol import preview_socketpair
     from test_supervisor import wait_for

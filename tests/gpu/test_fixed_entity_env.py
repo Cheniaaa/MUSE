@@ -100,11 +100,11 @@ def test_fixed_endpoints_in_exported_model_and_world_preview(fixed_env, tmp_path
     import mujoco
     from muse_runtime.preview import WorkerPreview
     from muse_sdk.run_protocol import drain_preview, preview_socketpair
-    from preview_helpers import preview_control
+    from preview_helpers import preview_control, preview_model
     env = fixed_env
     sender, receiver = preview_socketpair()
     try:
-        preview = WorkerPreview('fixed', env, tmp_path, sender, lambda *args: None)
+        preview = WorkerPreview('fixed', env, sender, lambda *args: None, model=preview_model(env, tmp_path))
         assert preview.error is None
         preview.apply(preview_control('fixed', 1, world=1))
         preview.sample(force=True)
