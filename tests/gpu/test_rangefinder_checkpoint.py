@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 from flight_helpers import archive
 from test_imu_checkpoint import execute_with_preview
@@ -32,7 +33,7 @@ def test_worker_checkpoint_restore_has_initial_rangefinder_before_first_step(tmp
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
     # 8 decisions = 160 physics ticks；4 decisions的旧IMU预算不足以触发5Hz range更新。
-    source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
+    source = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
 
     original_run, original_load = driver.run, checkpoint_module.load_checkpoint
     loaded, published_ticks, restored = [], [], []
@@ -102,8 +103,8 @@ def test_worker_checkpoint_restore_has_initial_rangefinder_before_first_step(tmp
     with sqlite3.connect(catalog.database) as db:
         db.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
         db.execute('INSERT INTO runs VALUES (?, ?)', (source.run_id, json.dumps(record)))
-    target = catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0',
-                                    checkpoint_artifact_id=artifact['id'], max_decision_steps=2)
+    target = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE',
+        checkpoint_artifact_id=artifact['id'], max_decision_steps=2), device='cuda:0')
     assert target.checkpoint.artifact_id == artifact['id']
     result, _ = execute_with_preview(target, monkeypatch)
     assert result == {'state': 'COMPLETED', 'steps': 2, 'updates': 0}

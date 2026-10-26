@@ -13,8 +13,7 @@ import zipfile
 from muse_sdk.config import ConfigError
 from muse_sdk.geometry import GeometryAssetSummary
 from muse_sdk.descriptor import parse_descriptor_json
-from muse_sdk.run_protocol import CheckpointArtifact, CheckpointReference, RunTimeouts
-from muse_sdk.recording_protocol import RecordingConfig
+from muse_sdk.run_protocol import CheckpointArtifact, CheckpointReference, RunRequest, RunTimeouts
 from muse_sdk.scene_edit import EnvironmentEdit, EnvironmentManifest
 from muse_sdk.experiment import (
     BuiltinMetadata, CatalogSnapshot, EnvironmentBundle, ExperimentDefinition, ResourceRecord, ResourceRef, RunPlan,
@@ -50,10 +49,6 @@ class Catalog:
         else:
             write_json_new(self.builtin_path, incoming.model_dump_json())
         self.builtins = incoming
-        for name, dto in (('experiment', ExperimentDefinition), ('run-plan', RunPlan)):
-            path = self.directory / f'{name}.schema.json'
-            if not path.exists():
-                write_json_new(path, json.dumps(dto.model_json_schema(), indent=2))
         for name in ('resources', 'runs'):
             (self.directory / name).mkdir(exist_ok=True)
         self.database = self.directory / 'catalog.sqlite3'
@@ -248,31 +243,20 @@ class Catalog:
             raise ConfigError('checkpoint_artifact_id', str(exc)) from exc
         return CheckpointReference(artifact_id=artifact.id, path=str(path), size=artifact.size, sha256=artifact.sha256)
 
-    def create_run_plan(self, experiment_id: str, *, mode: str, device: str,
-                        checkpoint_artifact_id: str | None = None, max_decision_steps: int = 24000,
-                        checkpoint_interval_updates: int | None = None,
-                        recording: RecordingConfig | dict | None = None,
+    def create_run_plan(self, request: RunRequest, *, device: str,
                         timeouts: RunTimeouts | None = None) -> RunPlan:
-        experiment = self.get_experiment(experiment_id)
-        if recording is not None:
-            recording = RecordingConfig.model_validate(recording)
-            if max(recording.world_ids) >= experiment.topology.world_count:
-                raise ConfigError('recording.world_ids', 'Recording world is outside Experiment topology')
-        if type(max_decision_steps) is not int or max_decision_steps <= 0:
-            raise ConfigError('max_decision_steps', 'Expected a positive integer decision budget')
-        if mode not in ('TRAIN', 'EVALUATE', 'INTERACTIVE'):
-            raise ConfigError('mode', 'Unknown Run mode')
-        if checkpoint_interval_updates is not None and (
-                mode != 'TRAIN' or type(checkpoint_interval_updates) is not int or checkpoint_interval_updates <= 0):
-            raise ConfigError('checkpoint_interval_updates', 'Expected a positive integer interval for TRAIN')
-        if mode == 'TRAIN' and experiment.training_schedule is None:
+        experiment = self.get_experiment(request.experiment_id)
+        if request.recording is not None and max(request.recording.world_ids) >= experiment.topology.world_count:
+            raise ConfigError('recording.world_ids', 'Recording world is outside Experiment topology')
+        if request.mode == 'TRAIN' and experiment.training_schedule is None:
             raise ConfigError('mode', 'TRAIN requires a learning Algorithm')
-        if mode in ('EVALUATE', 'INTERACTIVE'):
-            if experiment.training_schedule is not None and checkpoint_artifact_id is None:
-                raise ConfigError('checkpoint_artifact_id', f'Learning {mode} requires a checkpoint')
-            if experiment.training_schedule is None and checkpoint_artifact_id is not None:
-                raise ConfigError('checkpoint_artifact_id', f'Rule {mode} cannot load a checkpoint')
-        checkpoint = self.resolve_checkpoint(checkpoint_artifact_id, experiment) if checkpoint_artifact_id is not None else None
+        if request.mode in ('EVALUATE', 'INTERACTIVE'):
+            if experiment.training_schedule is not None and request.checkpoint_artifact_id is None:
+                raise ConfigError('checkpoint_artifact_id', f'Learning {request.mode} requires a checkpoint')
+            if experiment.training_schedule is None and request.checkpoint_artifact_id is not None:
+                raise ConfigError('checkpoint_artifact_id', f'Rule {request.mode} cannot load a checkpoint')
+        checkpoint = (self.resolve_checkpoint(request.checkpoint_artifact_id, experiment)
+                      if request.checkpoint_artifact_id is not None else None)
         if experiment.platform_revision != self.builtins.platform_revision:
             raise ConfigError('platform_revision', 'Experiment platform revision is unavailable')
         snapshot = self.snapshot()
@@ -292,11 +276,10 @@ class Catalog:
         run_id = uuid4().hex
         directory = self.directory / 'runs' / run_id
         directory.mkdir()
-        plan = RunPlan(run_id=run_id, experiment_id=experiment_id, mode=mode, device=device,
+        plan = RunPlan(run_id=run_id, experiment_id=request.experiment_id, mode=request.mode, device=device,
                        platform_revision=experiment.platform_revision, artifact_directory=str(directory),
-                       resource_paths=paths, experiment=experiment, max_decision_steps=max_decision_steps,
-                        checkpoint=checkpoint, checkpoint_interval_updates=checkpoint_interval_updates,
-                        recording=recording,
-                        timeouts=timeouts or RunTimeouts())
+                       resource_paths=paths, experiment=experiment, max_decision_steps=request.max_decision_steps,
+                       checkpoint=checkpoint, checkpoint_interval_updates=request.checkpoint_interval_updates,
+                       recording=request.recording, timeouts=timeouts or RunTimeouts())
         write_json_new(directory / 'resolved_run_plan.json', plan.model_dump_json(indent=2))
         return plan

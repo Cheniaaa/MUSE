@@ -3,6 +3,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 
 from mappo_helpers import EXAMPLE, cooperative_pipeline, example_definition
 
@@ -24,7 +25,7 @@ def test_cooperative_registration_and_resolution(pipeline, tmp_path):
     assert exp.task_config == {'learning_horizon': 3}
     assert exp.training_schedule.collection_steps == 4
     identity = catalog.save_experiment(exp, source=request)
-    assert catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=8).experiment == exp
+    assert catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cpu').experiment == exp
     request['algorithm_config']['share_actor_parameters'] = False
     assert resolve_experiment(request, catalog.snapshot()).valid
     request['task_config'] = {'learning_horizon': 0}

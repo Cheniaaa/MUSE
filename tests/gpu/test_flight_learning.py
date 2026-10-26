@@ -5,6 +5,7 @@ import zipfile
 
 import pytest
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / 'examples/basic_flight'
@@ -40,12 +41,13 @@ def training_case(tmp_path_factory):
 def test_training_schedule_and_mode_gates(training_case):
     from muse_sdk.config import ConfigError
     catalog, identity, request = training_case
-    plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0')
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
     assert plan.experiment.training_schedule.collection_steps == plan.experiment.algorithm_config['collection_steps'] == 4
     assert {s.term for s in plan.experiment.selections if s.term_kind == 'reward'} == {'builtin:progress', 'builtin:distance'}
     for mode, checkpoint in [('EVALUATE', None), ('TRAIN', 'checkpoint'), ('INTERACTIVE', None)]:
         with pytest.raises(ConfigError):
-            catalog.create_run_plan(identity, mode=mode, device='cuda:0', checkpoint_artifact_id=checkpoint)
+            catalog.create_run_plan(RunRequest(experiment_id=identity, mode=mode, max_decision_steps=8,
+                checkpoint_artifact_id=checkpoint), device='cuda:0')
 
 
 def test_controller_action_spec_beta_endpoints(training_case):
@@ -67,7 +69,7 @@ def learning_env(training_case, gpu_stream):
     from muse_runtime.env import MuseEnv, RuntimeContext
     from muse_runtime.rng import WorldRng
     catalog, identity, _ = training_case
-    plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0')
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
     env = MuseEnv(plan.experiment, RuntimeContext('cuda:0', plan.resource_paths, {}), WorldRng(7, 2, 'cuda:0'))
     yield env
     env.close()
@@ -198,7 +200,7 @@ def test_production_example_defaults_run_two_blocks(training_case, gpu_stream):
     assert experiment.algorithm_config['num_learning_epochs'] == 4
     assert experiment.algorithm_config['num_mini_batches'] == 4
     identity = catalog.save_experiment(experiment, source=production_request)
-    plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0')
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=48), device='cuda:0')
     rng = WorldRng(experiment.root_seed, experiment.topology.world_count, plan.device)
     env = MuseEnv(experiment, RuntimeContext(plan.device, plan.resource_paths, {}), rng)
     try:

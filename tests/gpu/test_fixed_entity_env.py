@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 from flight_helpers import add_fixed_anchors, archive
 
@@ -25,7 +26,7 @@ def fixed_plan(pipeline, tmp_path_factory):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    return catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
+    return catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
 
 
 @pytest.fixture(scope='module')

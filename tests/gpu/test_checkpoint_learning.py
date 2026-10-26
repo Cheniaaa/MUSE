@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 from test_flight_learning import training_case
 from muse_runtime.checkpoint import snapshot_learning_state
@@ -50,7 +51,7 @@ def test_checkpoint_batch_restore_and_frozen_evaluate(training_case, gpu_stream)
     from muse_sdk.run_protocol import CheckpointReference
     from muse_server.resolver import resolve_experiment
     catalog, identity, request = training_case
-    source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
+    source = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
     with initialized(source) as (env, algorithm):
         assert env.num_envs == 2
         result = run(env, algorithm, lambda: None, lambda *args: None,
@@ -68,7 +69,7 @@ def test_checkpoint_batch_restore_and_frozen_evaluate(training_case, gpu_stream)
     report = resolve_experiment(target_request, catalog.snapshot())
     assert report.valid, report.errors
     target_id = catalog.save_experiment(report.resolved_experiment, source=target_request)
-    target = catalog.create_run_plan(target_id, mode='TRAIN', device='cuda:0', max_decision_steps=8)
+    target = catalog.create_run_plan(RunRequest(experiment_id=target_id, mode='TRAIN', max_decision_steps=8), device='cuda:0')
     target.checkpoint = reference
     with initialized(target) as (env, algorithm):
         assert env.num_envs == 1 and env.common_step_counter == 0

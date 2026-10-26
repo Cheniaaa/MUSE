@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 
 from muse_server.resolver import resolve_experiment
 from reference_scenario_helpers import reference_catalog
@@ -25,7 +26,7 @@ def test_benchmark_variants_resolve_with_real_catalog(tmp_path):
         report = resolve_experiment(request, catalog.snapshot())
         assert report.valid, (variant['name'], report.errors)
         identity = catalog.save_experiment(report.resolved_experiment, source=request)
-        initial = catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=1)
+        initial = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=1), device='cpu')
         assert initial.experiment.training_schedule.collection_steps == 32
 
 
@@ -36,7 +37,7 @@ def test_partial_budget_run_uses_unchanged_collection_horizon(tmp_path, budget):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    plan = catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=budget)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=budget), device='cpu')
     assert plan.experiment.training_schedule.collection_steps == 32
     assert plan.max_decision_steps == budget
 

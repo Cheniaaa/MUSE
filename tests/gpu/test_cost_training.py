@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 from mappo_helpers import EXAMPLE, cooperative_pipeline
 from muse_runtime.checkpoint import snapshot_learning_state
@@ -66,7 +67,7 @@ def test_real_cost_training_checkpoint_new_episode_and_eval_freeze(pipeline, tmp
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=12)
+    source = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=12), device='cuda:0')
     with initialized(source) as (env, learner):
         assert set(learner.children) == {'scout/slot/0', 'rover/slot/0', 'rover/slot/1'}
         assert set(learner.cost_state) == {('scout', 'scout_squared_error'), (None, 'team_squared_error')}
@@ -80,7 +81,7 @@ def test_real_cost_training_checkpoint_new_episode_and_eval_freeze(pipeline, tmp
         assert all(cost.episode_sum.any() for cost in learner.cost_state.values())
         artifact = publish_checkpoint(source, learner, steps=12, updates=3)
 
-    target = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
+    target = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
     target.checkpoint = CheckpointReference(artifact_id=artifact.id,
         path=str(Path(source.artifact_directory) / artifact.path), size=artifact.size, sha256=artifact.sha256)
     with initialized(target) as (env, learner):

@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 
 from test_runs_api import EXAMPLE, register_experiment
 from test_supervisor import command, make_plan, wait_for
@@ -190,7 +191,7 @@ def test_invalid_checkpoint_fails_run_but_supervisor_continues(tmp_path, fault, 
         assert not any(a['kind'] == 'checkpoint' for a in record['artifacts'])
         assert supervisor.error is None
         supervisor.worker_command = command('success')
-        next_plan = catalog.create_run_plan(plan.experiment_id, mode='EVALUATE', device='cuda:0', max_decision_steps=1)
+        next_plan = catalog.create_run_plan(RunRequest(experiment_id=plan.experiment_id, mode='EVALUATE', max_decision_steps=1), device='cuda:0')
         supervisor.submit(next_plan)
         wait_for(lambda: supervisor.get_run(next_plan.run_id)['state'] == 'COMPLETED')
 
@@ -205,7 +206,7 @@ def test_orphan_checkpoint_is_not_scanned_and_failure_keeps_registered_files(tmp
         assert list(Path(plan.artifact_directory, 'checkpoints').glob('*.pt'))
         assert not any(a['kind'] == 'checkpoint' for a in supervisor.artifacts(plan.run_id))
         supervisor.worker_command = checkpoint_command('failure')
-        second = catalog.create_run_plan(plan.experiment_id, mode='EVALUATE', device='cuda:0', max_decision_steps=1)
+        second = catalog.create_run_plan(RunRequest(experiment_id=plan.experiment_id, mode='EVALUATE', max_decision_steps=1), device='cuda:0')
         supervisor.submit(second)
         record = wait_for(lambda: (r if (r := supervisor.get_run(second.run_id))['state'] in TERMINAL_STATES else None))
         assert record['state'] == 'FAILED'

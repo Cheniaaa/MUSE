@@ -6,6 +6,7 @@ import shutil
 import pytest
 import torch
 import yaml
+from muse_sdk.run_protocol import RunRequest
 
 from flight_helpers import archive
 from mappo_helpers import EXAMPLE, cooperative_pipeline
@@ -118,7 +119,7 @@ def cost_plans(pipeline, tmp_path_factory):
         report = resolve_experiment(candidate, catalog.snapshot())
         assert report.valid, report.errors
         identity = catalog.save_experiment(report.resolved_experiment, source=candidate)
-        plans[enabled] = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
+        plans[enabled] = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
     return plans
 
 

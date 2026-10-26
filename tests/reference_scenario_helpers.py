@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 from flight_helpers import EXAMPLE, archive
+from muse_sdk.run_protocol import RunRequest
 
 
 REFERENCE_EXAMPLES = EXAMPLE.parent
@@ -59,8 +60,8 @@ def reference_env(catalog, request):
     assert report.valid, report.errors
     experiment = report.resolved_experiment
     identity = catalog.save_experiment(experiment, source=request)
-    plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0',
-                                   max_decision_steps=experiment.training_schedule.collection_steps)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN',
+        max_decision_steps=experiment.training_schedule.collection_steps), device='cuda:0')
     with load_package(Path(plan.resource_paths['training_package'])) as package:
         models = {'builtin:' + name: cls for name, cls in {**registrations(), **sensing_registrations()}.items()}
         context = RuntimeContext('cuda:0', plan.resource_paths, package.definition.terms,

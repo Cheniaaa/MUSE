@@ -6,6 +6,7 @@ import sys
 import zipfile
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 from flight_helpers import EXAMPLE, archive
 
 
@@ -52,12 +53,12 @@ def test_real_registration_and_frozen_flight_experiment(pipeline):
     assert exp.model_dump_json() == before
     identity = catalog.save_experiment(exp, source=request)
     assert catalog.get_experiment(identity).model_dump_json() == before
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu')
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=8), device='cpu')
     assert plan.experiment.model_dump_json() == before
     assert Path(plan.resource_paths['environment']).is_dir()
     assert Path(plan.artifact_directory, 'resolved_run_plan.json').is_file()
     with pytest.raises(ValueError, match='TRAIN'):
-        catalog.create_run_plan(identity, mode='TRAIN', device='cpu')
+        catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cpu')
 
 
 @pytest.mark.parametrize('mutation,field', [
@@ -196,13 +197,6 @@ def test_environment_cannot_reference_external_assets(pipeline, tmp_path):
         catalog.register_archive('environment', path)
 
 
-def test_schemas_are_saved_for_worker_consumers(pipeline):
-    catalog, _ = pipeline
-    for name in ('experiment.schema.json', 'run-plan.schema.json'):
-        schema = json.loads((catalog.directory / name).read_text())
-        assert schema['additionalProperties'] is False
-
-
 def test_server_and_sdk_import_boundaries(pipeline, tmp_path):
     catalog, request = pipeline
     request_path = tmp_path / 'request.json'
@@ -274,15 +268,19 @@ def test_two_same_role_selections_have_independent_resolved_values(pipeline):
     assert report.resolved_experiment.controllers['scout_group']['config']['tilt_limit_rad'] == .2
 
 
-@pytest.mark.parametrize('mode,checkpoint,message', [
-    ('UNKNOWN', None, 'Unknown Run mode'), ('EVALUATE', 'checkpoint-id', 'Rule EVALUATE'),
-    ('INTERACTIVE', 'checkpoint-id', 'Rule INTERACTIVE')])
-def test_unsupported_run_mode_or_rule_checkpoint_cannot_create_plan(pipeline, mode, checkpoint, message):
+def test_run_request_rejects_unknown_mode():
+    with pytest.raises(ValueError, match='mode'):
+        RunRequest(experiment_id='exp', mode='UNKNOWN', max_decision_steps=8)
+
+
+@pytest.mark.parametrize('mode', ['EVALUATE', 'INTERACTIVE'])
+def test_rule_checkpoint_cannot_create_plan(pipeline, mode):
     from muse_server.resolver import resolve_experiment
     catalog, request = pipeline
     identity = catalog.save_experiment(resolve_experiment(request, catalog.snapshot()).resolved_experiment, source=request)
-    with pytest.raises(ValueError, match=message):
-        catalog.create_run_plan(identity, mode=mode, device='cuda:0', checkpoint_artifact_id=checkpoint)
+    with pytest.raises(ValueError, match=f'Rule {mode}'):
+        catalog.create_run_plan(RunRequest(experiment_id=identity, mode=mode, max_decision_steps=8,
+            checkpoint_artifact_id='checkpoint-id'), device='cpu')
 
 
 def test_builtin_metadata_export_is_cpu_only_and_self_contained(tmp_path):

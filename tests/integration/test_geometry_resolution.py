@@ -3,6 +3,7 @@ from copy import deepcopy
 
 import pytest
 import yaml
+from muse_sdk.run_protocol import RunRequest
 from flight_helpers import archive, add_fixed_anchors
 from muse_server.resolver import resolve_experiment
 
@@ -43,7 +44,7 @@ def test_geometry_is_frozen_through_experiment_and_run_plan(pipeline, tmp_path):
     assert exp.geometry.blockers == ('wall',)
     assert exp.geometry.endpoint_epsilon_m > 0
     identity = catalog.save_experiment(exp, source=request)
-    assert catalog.create_run_plan(identity, mode='EVALUATE', device='cpu').experiment.geometry == exp.geometry
+    assert catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=8), device='cpu').experiment.geometry == exp.geometry
     assert exp.model_bindings == {} and 'radio' not in exp.activation
     request['model_config'] = {'test': {}}
     assert resolve_experiment(request, catalog.snapshot()).errors[0]['field'] == 'model_config'

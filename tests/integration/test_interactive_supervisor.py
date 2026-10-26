@@ -5,7 +5,8 @@ import sys
 
 import pytest
 
-from muse_sdk.run_protocol import InteractiveCommand, WorkerControl, WorkerEvent
+from muse_sdk.run_protocol import InteractiveCommand, RunRequest, WorkerControl, WorkerEvent
+from muse_server.errors import ResourceNotFound
 from muse_server.supervisor import Supervisor
 from test_supervisor import make_plan, wait_for
 
@@ -43,7 +44,7 @@ def live(catalog):
     # 独立验证 Supervisor；准入未实现前仍可构造 SDK 已支持的冻结计划。
     with catalog._connect() as db:
         identity = db.execute('SELECT id FROM experiments LIMIT 1').fetchone()[0]
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu', max_decision_steps=8)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=8), device='cpu')
     plan = plan.model_copy(update={'mode': 'INTERACTIVE'})
     Path(plan.artifact_directory, 'resolved_run_plan.json').write_text(plan.model_dump_json())
     with Supervisor(catalog, worker_command=lambda p: [sys.executable, '-c', CHILD, p.run_id]) as supervisor:
@@ -136,7 +137,7 @@ def test_missing_worker_world_bound_and_ahead_sequence(live):
                 supervisor.submit_command(plan.run_id, cmd())
         finally:
             supervisor._active = active
-        with pytest.raises(KeyError):
+        with pytest.raises(ResourceNotFound):
             supervisor.submit_command('missing', cmd())
 
 

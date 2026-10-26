@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import torch
 import yaml
+from muse_sdk.run_protocol import RunRequest
 
 from flight_helpers import archive
 
@@ -63,7 +64,7 @@ def make_imu_plan(root, period=3, enabled=True, task=False):
     report = resolve_experiment(payload, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=payload)
-    return catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0')
+    return catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=8), device='cuda:0')
 
 
 @pytest.fixture(scope='module')

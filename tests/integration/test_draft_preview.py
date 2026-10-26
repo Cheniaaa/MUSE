@@ -5,6 +5,8 @@ import sys
 
 import pytest
 
+from muse_server.errors import ResourceNotFound
+
 from test_supervisor import wait_for
 
 
@@ -64,7 +66,7 @@ def test_latest_revision_wins_and_disconnect_closes(pipeline, tmp_path):
                        for event in manager.events(identity))
         manager.close(identity)
         assert process_identity(pid) is None
-        with pytest.raises(KeyError):
+        with pytest.raises(ResourceNotFound):
             manager.get(identity)
     finally:
         manager.shutdown()
@@ -80,7 +82,7 @@ def test_unattached_preview_expires(pipeline, tmp_path):
         wait_for(lambda: (tmp_path / 'pid').exists())
         pid = int((tmp_path / 'pid').read_text())
         wait_for(lambda: process_identity(pid) is None)
-        with pytest.raises(KeyError):
+        with pytest.raises(ResourceNotFound):
             manager.get(identity)
     finally:
         manager.shutdown()

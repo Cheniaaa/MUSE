@@ -6,6 +6,7 @@ from types import MappingProxyType
 import pytest
 import torch
 import yaml
+from muse_sdk.run_protocol import RunRequest
 
 from flight_helpers import add_fixed_anchors, archive
 from muse_sdk.config import DataModel, export_config_schema
@@ -68,7 +69,7 @@ def freeze_plan(catalog, source, batch_size, *, geometry=True):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    return catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0')
+    return catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=8), device='cuda:0')
 
 
 def assert_layout(layout):

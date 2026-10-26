@@ -8,6 +8,7 @@ import time
 
 import numpy as np
 import pytest
+from muse_sdk.run_protocol import RunRequest
 
 
 def frame(seq=1, world=0, episode=0, decision=1, nbody=2, viewer='viser'):
@@ -458,7 +459,7 @@ def test_interactive_viser_buttons_use_supervisor_and_ack(tmp_path):
     from muse_server.supervisor import Supervisor
     from test_supervisor import make_plan, wait_for
     catalog, base = make_plan(tmp_path)
-    plan = catalog.create_run_plan(base.experiment_id, mode='INTERACTIVE', device='cpu', max_decision_steps=8)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=base.experiment_id, mode='INTERACTIVE', max_decision_steps=8), device='cpu')
     frozen = Path(plan.artifact_directory, 'resolved_run_plan.json').read_bytes()
     source = DISPLAY_CHILD.replace('decision = 0', 'decision = 0\npaused = False')
     source = source.replace('    for control in p.take_preview_controls():', '''

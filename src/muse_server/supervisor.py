@@ -19,6 +19,7 @@ from muse_sdk.recording_protocol import RecordingArtifact, RecordingState, Traje
 from muse_sdk.run_protocol import (CheckpointArtifact, CommandResult, InteractiveCommand,
                                    WorkerControl, WorkerEvent, preview_socketpair)
 from .display import DisplaySession
+from .errors import ResourceNotFound
 from .storage import verify_checkpoint_file, verify_recorded_file
 
 TERMINAL_STATES = frozenset(('COMPLETED', 'CANCELLED', 'FAILED', 'LOST'))
@@ -162,7 +163,7 @@ class Supervisor:
         with self._lock, self._connect() as db:
             row = db.execute('SELECT record FROM runs WHERE id=?', (run_id,)).fetchone()
             if row is None:
-                raise KeyError(run_id)
+                raise ResourceNotFound(run_id)
             return json.loads(row[0])
 
     def list_runs(self, *, experiment_id=None, mode=None, state=None, offset=0, limit=50):

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / 'examples/basic_flight'
@@ -64,7 +65,7 @@ def build_plan(root, progress=False, shared_group=False, worlds=2, history=0):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    return catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0')
+    return catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=8), device='cuda:0')
 
 
 @pytest.fixture(scope='module')

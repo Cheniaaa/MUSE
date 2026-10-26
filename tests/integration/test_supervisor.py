@@ -9,6 +9,7 @@ import threading
 import time
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -41,8 +42,8 @@ def make_plan(tmp_path, run_id='run1', **timeouts):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0', max_decision_steps=8,
-                                   timeouts=RunTimeouts(**timeouts))
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=8),
+                                   device='cuda:0', timeouts=RunTimeouts(**timeouts))
     return catalog, plan
 
 
@@ -180,7 +181,7 @@ assert WorkerControl.model_validate_json(c.model_dump_json()) == c
 def test_queued_cancel_never_spawns_and_queue_waits_for_exit(tmp_path):
     from muse_server.supervisor import Supervisor
     catalog, plan = make_plan(tmp_path, cancel=.1, stop=.1)
-    second = catalog.create_run_plan(plan.experiment_id, mode='EVALUATE', device='cuda:0', max_decision_steps=1)
+    second = catalog.create_run_plan(RunRequest(experiment_id=plan.experiment_id, mode='EVALUATE', max_decision_steps=1), device='cuda:0')
     with Supervisor(catalog, worker_command=command('hang')) as supervisor:
         supervisor.submit(plan)
         wait_for(lambda: supervisor.get_run(plan.run_id)['state'] == 'RUNNING')
@@ -228,7 +229,7 @@ while True: time.sleep(.1)
         wait_for(lambda: (p := Path(plan.artifact_directory, 'logs/worker.log')).exists() and p.read_text() == 'ready')
         parent.kill()
         parent.wait()
-        second = catalog.create_run_plan(plan.experiment_id, mode='EVALUATE', device='cuda:0', max_decision_steps=1)
+        second = catalog.create_run_plan(RunRequest(experiment_id=plan.experiment_id, mode='EVALUATE', max_decision_steps=1), device='cuda:0')
         with Supervisor(catalog, worker_command=command('success')) as supervisor:
             assert supervisor.get_run(plan.run_id)['state'] == 'LOST'
             supervisor.submit(second)
@@ -295,7 +296,7 @@ def test_unconfirmed_worker_identity_blocks_queue_without_signalling(tmp_path, m
             record.update(state='RUNNING', pid=other.pid, pgid=other.pid,
                           process_start=None if identity_fault == 'missing_start' else identity)
             db.execute('UPDATE runs SET record=? WHERE id=?', (json.dumps(record), plan.run_id))
-        queued = catalog.create_run_plan(plan.experiment_id, mode='EVALUATE', device='cuda:0', max_decision_steps=1)
+        queued = catalog.create_run_plan(RunRequest(experiment_id=plan.experiment_id, mode='EVALUATE', max_decision_steps=1), device='cuda:0')
 
         def identity_read(path, *args, **kwargs):
             if path == Path(f'/proc/{other.pid}/stat'):
@@ -348,7 +349,7 @@ def test_startup_timeout_and_spawn_error_have_terminal(tmp_path):
         supervisor.submit(plan)
         record = wait_for(lambda: (r if (r := supervisor.get_run(plan.run_id))['state'] == 'FAILED' else None))
         assert 'startup timeout' in record['failure']
-    second = catalog.create_run_plan(plan.experiment_id, mode='EVALUATE', device='cuda:0', max_decision_steps=1)
+    second = catalog.create_run_plan(RunRequest(experiment_id=plan.experiment_id, mode='EVALUATE', max_decision_steps=1), device='cuda:0')
     with Supervisor(catalog, worker_command=lambda p: ['/nonexistent/muse-worker']) as supervisor:
         supervisor.submit(second)
         record = wait_for(lambda: (r if (r := supervisor.get_run(second.run_id))['state'] == 'FAILED' else None))

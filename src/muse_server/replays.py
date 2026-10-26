@@ -21,6 +21,8 @@ from muse_sdk.recording_protocol import RecordingArtifact
 from muse_sdk.replay_protocol import RecordingRequest, ReplayCommand, ReplayRequest, ReplayState
 from muse_sdk.view_protocol import ViewIntent
 
+from .errors import ResourceNotFound
+
 
 def replay_command(identity: str) -> list[str]:
     return [sys.executable, '-m', 'muse_server.viewers.replay_process', '--view-id', identity]
@@ -101,11 +103,17 @@ class ReplayManager:
         self._lock = threading.RLock()
         self._sessions = {}
 
+    def _session(self, identity):
+        try:
+            return self._sessions[identity]
+        except KeyError as exc:
+            raise ResourceNotFound(identity) from exc
+
     def create(self, request: ReplayRequest) -> dict:
         record = self.supervisor.get_run(request.run_id)
         value = next((item for item in record['artifacts'] if item['id'] == request.trajectory_artifact_id), None)
         if value is None:
-            raise KeyError(request.trajectory_artifact_id)
+            raise ResourceNotFound(request.trajectory_artifact_id)
         if value['kind'] != 'trajectory' or value['run'] != request.run_id:
             raise ConfigError('trajectory_artifact_id', 'Artifact must be a trajectory published by this Run')
         stop_timeout = self.supervisor.get_plan(request.run_id).timeouts.stop
@@ -184,11 +192,11 @@ class ReplayManager:
 
     def get(self, identity: str) -> dict:
         with self._lock:
-            return deepcopy(self._sessions[identity].state)
+            return deepcopy(self._session(identity).state)
 
     def attach(self, identity: str) -> None:
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             if session.attached or session.stopping:
                 raise ConfigError('session_id', 'Replay control is already attached or closing')
             session.attached = True
@@ -197,7 +205,7 @@ class ReplayManager:
     def control(self, identity: str, message: dict) -> None:
         overflow = None
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             if not session.attached:
                 raise ConfigError('session_id', 'Replay control is not attached')
             kind = message.get('kind') if isinstance(message, dict) else None
@@ -229,7 +237,7 @@ class ReplayManager:
 
     def events(self, identity: str) -> list[dict]:
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             result = list(session.events)
             session.events.clear()
             return result
@@ -242,7 +250,7 @@ class ReplayManager:
 
     def export(self, identity: str, request: RecordingRequest) -> dict:
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             if session.stopping or session.state['status'] != 'ready':
                 raise RuntimeError('Replay is not ready')
             if not session.state['camera_ready']:
@@ -398,10 +406,10 @@ class ReplayManager:
 
     def cancel_export(self, identity: str, export_id: str) -> None:
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             job = session.export_job
             if job is None or job.identity != export_id:
-                raise KeyError(export_id)
+                raise ResourceNotFound(export_id)
         self._cancel_export_job(session, job)
 
     def _dispose(self, session, *, remove, failure=None, unattached_only=False):
@@ -452,7 +460,7 @@ class ReplayManager:
 
     def close(self, identity: str) -> None:
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
         self._dispose(session, remove=True)
 
     def shutdown(self) -> None:

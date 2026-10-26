@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 
 from muse_server.resolver import resolve_experiment
 
@@ -263,7 +264,7 @@ def test_canonical_rates_pass_real_catalog_and_worker_checkpoint_checks(pipeline
     request, snapshot, _ = imu_case(pipeline)
     first = resolved(request, snapshot)
     identity = catalog.save_experiment(first, source=request)
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu')
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=4), device='cpu')
     artifact = publish_checkpoint(plan, SimpleNamespace(learning_state_dict=lambda: {'updates': 7}), steps=4, updates=7)
     record = {'run_id': plan.run_id, 'artifact_directory': plan.artifact_directory,
               'plan_path': str(Path(plan.artifact_directory) / 'resolved_run_plan.json'),
@@ -287,7 +288,8 @@ def test_inactive_config_remains_subject_to_catalog_resource_comparison(pipeline
     catalog, _ = pipeline
     request, snapshot, _ = imu_case(pipeline, enabled=False)
     first = resolved(request, snapshot)
-    plan = catalog.create_run_plan(catalog.save_experiment(first, source=request), mode='EVALUATE', device='cpu')
+    plan = catalog.create_run_plan(RunRequest(experiment_id=catalog.save_experiment(first, source=request),
+        mode='EVALUATE', max_decision_steps=1), device='cpu')
     artifact = publish_checkpoint(plan, SimpleNamespace(learning_state_dict=lambda: {}), steps=0, updates=0)
     record = {'run_id': plan.run_id, 'artifact_directory': plan.artifact_directory,
               'plan_path': str(Path(plan.artifact_directory) / 'resolved_run_plan.json'),

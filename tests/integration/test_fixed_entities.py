@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 
 from flight_helpers import add_fixed_anchors
 from test_runs_api import real_http_client, zip_body
@@ -29,7 +30,7 @@ def test_fixed_entities_preserve_action_layout_and_freeze_resources(pipeline, in
     assert exp.controllers['anchor_group'] == {'id': 'none'}
     assert set(exp.bindings) == {'scout', 'guard'}
     identity = catalog.save_experiment(exp, source=request)
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu', max_decision_steps=2)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=2), device='cpu')
     model = plan.experiment.entity_models['radio_base_station']
     asset = Path(plan.resource_paths['entity_model:radio_base_station'])
     assert (asset / model.physics_asset).is_file()

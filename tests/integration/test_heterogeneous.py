@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from muse_sdk.run_protocol import RunRequest
 from flight_helpers import archive
 
 
@@ -125,7 +126,7 @@ def test_real_mixed_registration_and_heads(pipeline, tmp_path):
     assert [x.selection_id for x in exp.selections if x.term_kind == 'termination'] == [
         'scout_collision', 'rover_collision', 'episode_limit']
     identity = catalog.save_experiment(exp, source=request)
-    plan = catalog.create_run_plan(identity, mode='TRAIN', device='cpu', max_decision_steps=8)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cpu')
     assert plan.max_decision_steps == 8
     assert plan.experiment.model_dump_json() == exp.model_dump_json()
 

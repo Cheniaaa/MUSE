@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 import yaml
+from muse_sdk.run_protocol import RunRequest
 
 from sensing_package_helpers import SENSING, sensing_catalog
 from muse_server.resolver import resolve_experiment
@@ -23,7 +24,7 @@ def sensing_env(catalog, request):
     assert report.valid, report.errors
     experiment = report.resolved_experiment
     identity = catalog.save_experiment(experiment, source=request)
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0', max_decision_steps=200)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=200), device='cuda:0')
     with load_package(Path(plan.resource_paths['training_package'])) as package:
         registered = {'builtin:' + name: cls for name, cls in
                       {**registrations(), **sensing_registrations()}.items()}

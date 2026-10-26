@@ -22,6 +22,7 @@ from muse_sdk.run_protocol import DisplayPatch, InteractiveCommand, RunRequest, 
 from muse_sdk.replay_protocol import RecordingRequest, ReplayRequest
 
 from .catalog import API_REVISION, Catalog
+from .errors import ResourceNotFound
 from .resolver import resolve_experiment
 from .inspection import inspect_experiment
 from .run_data import read_log_page, read_metric_page
@@ -126,7 +127,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         status = 404 if any(e['message'].startswith('Unknown experiment') for e in exc.errors) else 422
         return JSONResponse(status_code=status, content={'errors': exc.errors})
 
-    @app.exception_handler(KeyError)
+    @app.exception_handler(ResourceNotFound)
     async def missing_record(request, exc):
         return JSONResponse(status_code=404, content={'detail': 'Unknown resource'})
 
@@ -181,7 +182,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         replays = app.state.replays
         try:
             replays.attach(session_id)
-        except (KeyError, ConfigError):
+        except (ResourceNotFound, ConfigError):
             await websocket.close(code=1008)
             return
         previous = None
@@ -204,7 +205,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
                     pass
         except WebSocketDisconnect:
             return
-        except KeyError:
+        except ResourceNotFound:
             await websocket.close(code=1000)
             return
         finally:
@@ -212,7 +213,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
             with CancelScope(shield=True):
                 try:
                     await asyncio.to_thread(replays.close, session_id)
-                except KeyError:
+                except ResourceNotFound:
                     # 显式DELETE可能先于WS断开完成；会话已由同一owner回收。
                     pass
 
@@ -245,7 +246,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         previews = app.state.previews
         try:
             previews.attach(session_id)
-        except (KeyError, ConfigError):
+        except (ResourceNotFound, ConfigError):
             await websocket.close(code=1008)
             return
         previous = None
@@ -268,7 +269,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
                         await websocket.send_json({'kind': 'error', 'message': str(exc)})
                 except asyncio.TimeoutError:
                     pass
-        except (WebSocketDisconnect, KeyError):
+        except (WebSocketDisconnect, ResourceNotFound):
             return
         finally:
             await asyncio.to_thread(previews.close, session_id)
@@ -368,7 +369,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
 
     @app.post('/runs', status_code=201)
     def create_run(request: RunRequest):
-        plan = app.state.catalog.create_run_plan(**request.model_dump(), device='cuda:0', timeouts=limits)
+        plan = app.state.catalog.create_run_plan(request, device='cuda:0', timeouts=limits)
         return app.state.supervisor.submit(plan)
 
     @app.get('/runs')
@@ -451,7 +452,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         supervisor = app.state.supervisor
         try:
             supervisor.get_run(run_id)
-        except KeyError:
+        except ResourceNotFound:
             await websocket.close(code=1008)
             return
         await websocket.accept()
@@ -479,7 +480,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         supervisor = app.state.supervisor
         try:
             supervisor.get_run(run_id)
-        except KeyError:
+        except ResourceNotFound:
             await websocket.close(code=1008)
             return
         await websocket.accept()
@@ -507,7 +508,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
         supervisor = app.state.supervisor
         try:
             initial = supervisor.view_events(run_id, view_id)
-        except (KeyError, ValueError):
+        except (ResourceNotFound, ValueError):
             await websocket.close(code=1008)
             return
         try:
@@ -534,7 +535,7 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
     async def entity_stream(websocket: WebSocket, run_id: str):
         try:
             app.state.supervisor.get_run(run_id)
-        except KeyError:
+        except ResourceNotFound:
             await websocket.close(code=1008)
             return
         await websocket.accept()

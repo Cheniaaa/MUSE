@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import mujoco
 import numpy as np
+from muse_sdk.run_protocol import RunRequest
 import pytest
 
 from muse_sdk.content import hash_package
@@ -220,7 +221,7 @@ def test_real_frozen_run_plan_still_compiles_through_shared_cpu_path(pipeline):
     report = resolve_experiment(source, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=source)
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu', max_decision_steps=1)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=1), device='cpu')
     cfg, sim_cfg = assemble_scene(plan.experiment, plan.resource_paths)
     model = Scene(cfg, device='cpu').compile()
     data = mujoco.MjData(model)

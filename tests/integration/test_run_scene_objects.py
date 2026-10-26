@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from muse_sdk.experiment import EntityModelRef, Pose
+from muse_sdk.run_protocol import RunRequest
 
 
 @pytest.fixture
@@ -172,7 +173,7 @@ def test_real_frozen_plan_objects_from_compiled_scene(pipeline):
     report = resolve_experiment(source, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=source)
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cpu', max_decision_steps=1)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=1), device='cpu')
     cfg, _ = assemble_scene(plan.experiment, plan.resource_paths)
     scene = Scene(cfg, device='cpu')
     model = scene.compile()

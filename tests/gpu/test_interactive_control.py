@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 from mappo_helpers import EXAMPLE, cooperative_pipeline
 from test_checkpoint_learning import assert_learning_state_equal
@@ -29,7 +30,7 @@ def test_interactive_subset_reset_freezes_learning_and_refreshes_preview(pipelin
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    source = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=4)
+    source = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=4), device='cuda:0')
     with initialized(source) as (env, learner):
         run(env, learner, lambda: None, lambda *_: None, mode='TRAIN',
             collection_steps=4, max_decision_steps=4)

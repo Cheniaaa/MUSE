@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 from indoor_radio_helpers import indoor_radio_catalog
 from muse_server.resolver import resolve_experiment
@@ -23,7 +24,7 @@ def indoor_env(catalog, request):
     assert report.valid, report.errors
     experiment = report.resolved_experiment
     identity = catalog.save_experiment(experiment, source=request)
-    plan = catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0', max_decision_steps=200)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=200), device='cuda:0')
     with load_package(Path(plan.resource_paths['training_package'])) as package:
         models = {'builtin:' + name: cls for name, cls in registrations().items()}
         context = RuntimeContext('cuda:0', plan.resource_paths, package.definition.terms,

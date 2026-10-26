@@ -133,7 +133,7 @@ def test_real_hybrid_action_keeps_int32_channels(tmp_path, gpu_stream):
     with indoor_env(catalog, request) as (env, rule):
         plan = RunPlan(run_id='radio', experiment_id='radio-exp', mode='EVALUATE', device='cuda:0',
             platform_revision=env.experiment.platform_revision, artifact_directory=str(tmp_path),
-            resource_paths={}, experiment=env.experiment)
+            resource_paths={}, experiment=env.experiment, max_decision_steps=1)
         recorder, events, _ = start(plan, env, tmp_path / 'capture', stride=1)
         action = rule.act(env.policy_input.observations, env.role_masks, env.rng, True)
         env.step(action.role_actions)

@@ -3,6 +3,7 @@ from dataclasses import replace
 
 import pytest
 import torch
+from muse_sdk.run_protocol import RunRequest
 
 from mappo_helpers import cooperative_pipeline, example_definition
 from test_mappo_env import zero_actions
@@ -21,7 +22,7 @@ def history_env(pipeline, tmp_path, gpu_stream):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    plan = catalog.create_run_plan(identity, mode='TRAIN', device='cuda:0', max_decision_steps=8)
+    plan = catalog.create_run_plan(RunRequest(experiment_id=identity, mode='TRAIN', max_decision_steps=8), device='cuda:0')
     definition = example_definition()
     cpu_rng, gpu_rng = torch.random.get_rng_state().clone(), torch.cuda.get_rng_state().clone()
     env = MuseEnv(plan.experiment, RuntimeContext('cuda:0', plan.resource_paths, definition.terms,

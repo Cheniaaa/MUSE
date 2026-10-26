@@ -303,7 +303,7 @@ class RunPlan(DataModel):
     artifact_directory: str
     resource_paths: dict[str, str]
     experiment: ExperimentDefinition
-    max_decision_steps: int = Field(default=24000, gt=0, description='本次运行的决策步数上限；一次同时推进全部world，不乘world数，不计内部物理子步')
+    max_decision_steps: int = Field(gt=0, description='本次运行的决策步数上限；一次同时推进全部world，不乘world数，不计内部物理子步')
     timeouts: RunTimeouts = Field(default_factory=RunTimeouts)
     checkpoint: CheckpointReference | None = None
     checkpoint_interval_updates: int | None = Field(default=None, gt=0)

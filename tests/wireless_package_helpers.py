@@ -9,6 +9,7 @@ import sys
 import yaml
 
 from flight_helpers import EXAMPLE, add_fixed_anchors, archive
+from muse_sdk.run_protocol import RunRequest
 
 
 PACKAGE = Path(__file__).parent / 'fixtures' / 'wireless_package'
@@ -130,4 +131,4 @@ def wireless_plan(root, **kwargs):
     report = resolve_experiment(request, catalog.snapshot())
     assert report.valid, report.errors
     identity = catalog.save_experiment(report.resolved_experiment, source=request)
-    return catalog, catalog.create_run_plan(identity, mode='EVALUATE', device='cuda:0', max_decision_steps=6)
+    return catalog, catalog.create_run_plan(RunRequest(experiment_id=identity, mode='EVALUATE', max_decision_steps=6), device='cuda:0')

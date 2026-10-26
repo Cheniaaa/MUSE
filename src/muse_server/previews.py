@@ -16,6 +16,8 @@ from muse_sdk.experiment import EntityModelRef
 from muse_sdk.scene_edit import PreviewEntity, ScenePreviewRequest
 from muse_sdk.view_protocol import ViewIntent
 
+from .errors import ResourceNotFound
+
 
 def preview_command(identity):
     return [sys.executable, '-m', 'muse_runtime.draft_session', '--view-id', identity]
@@ -46,6 +48,12 @@ class PreviewManager:
         self.attach_timeout, self.process_command = attach_timeout, process_command
         self._lock = threading.RLock()
         self._sessions = {}
+
+    def _session(self, identity):
+        try:
+            return self._sessions[identity]
+        except KeyError as exc:
+            raise ResourceNotFound(identity) from exc
 
     def _resolve(self, payload):
         request = ScenePreviewRequest.model_validate(payload)
@@ -131,7 +139,7 @@ class PreviewManager:
     def update(self, identity, request):
         resolved = self._resolve(request)
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             if session.closed:
                 raise ConfigError('session_id', 'Preview session is closing')
             if session.terminated:
@@ -207,11 +215,11 @@ class PreviewManager:
 
     def get(self, identity):
         with self._lock:
-            return deepcopy(self._sessions[identity].state)
+            return deepcopy(self._session(identity).state)
 
     def attach(self, identity):
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             if session.attached or session.closed:
                 raise ConfigError('session_id', 'Preview control is already attached or closing')
             session.attached = True
@@ -220,7 +228,7 @@ class PreviewManager:
     def view_intent(self, identity, intent):
         value = ViewIntent.model_validate(intent)
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             if not session.attached:
                 raise ConfigError('session_id', 'Preview control is not ready')
             if session.state['status'] != 'ready':
@@ -230,7 +238,7 @@ class PreviewManager:
 
     def events(self, identity):
         with self._lock:
-            session = self._sessions[identity]
+            session = self._session(identity)
             result = list(session.events)
             session.events.clear()
             return result
