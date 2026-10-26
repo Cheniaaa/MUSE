@@ -13,6 +13,7 @@ import psutil
 import pytest
 
 from test_basic_flight import archive, response_json, TERMINAL
+from acceptance_helpers import confirmed_display_error
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -142,10 +143,10 @@ def test_native_acceptance(case):
                             slot = display[viewer]
                             if slot['status'] == 'ready' and slot['frame'] is not None:
                                 ready_at.setdefault(viewer, observed)
-                            # Worker终态之后Server仍须等viewer writer退出再发布可靠终态。
-                            if (case != 'interactive' and slot['status'] == 'error'
-                                    and run['state'] not in TERMINAL and run['worker_terminal'] is None):
-                                pytest.fail(f'{viewer}: {slot["error"]}')
+                        # display 来自另一次 HTTP；正常终态释放前必须重读 Run。
+                        if case != 'interactive':
+                            error = confirmed_display_error(client, run_id, display, enabled)
+                            assert error is None, error
                         if run['state'] in TERMINAL:
                             break
                         assert time.monotonic() < deadline, 'Authorized wall-clock budget exhausted'
