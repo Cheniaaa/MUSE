@@ -19,7 +19,7 @@ from muse_sdk.config import ConfigError
 from muse_sdk.experiment import ExperimentRequest, ScenarioDefinition
 from muse_sdk.scene_edit import EnvironmentEdit, ScenePreviewRequest
 from muse_sdk.run_protocol import DisplayPatch, InteractiveCommand, RunRequest, RunTimeouts
-from muse_sdk.replay_protocol import ReplayRequest
+from muse_sdk.replay_protocol import RecordingRequest, ReplayRequest
 
 from .catalog import API_REVISION, Catalog
 from .resolver import resolve_experiment
@@ -148,7 +148,8 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
                 'scenario': ScenarioDefinition.model_json_schema(), 'run_request': RunRequest.model_json_schema(),
                 'environment_edit': EnvironmentEdit.model_json_schema(),
                 'preview_request': ScenePreviewRequest.model_json_schema(),
-                'replay_request': ReplayRequest.model_json_schema()}
+                'replay_request': ReplayRequest.model_json_schema(),
+                'recording_request': RecordingRequest.model_json_schema()}
 
     @app.post('/replays', status_code=201)
     def create_replay(request: ReplayRequest):
@@ -161,6 +162,17 @@ def create_app(data_dir, *, controller_path=None, timeouts=None, worker_command=
     @app.delete('/replays/{session_id}', status_code=204)
     def close_replay(session_id: str):
         app.state.replays.close(session_id)
+
+    @app.post('/replays/{session_id}/recordings', status_code=202)
+    def export_recording(session_id: str, request: RecordingRequest):
+        try:
+            return app.state.replays.export(session_id, request)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.delete('/replays/{session_id}/recordings/{export_id}', status_code=204)
+    def cancel_recording(session_id: str, export_id: str):
+        app.state.replays.cancel_export(session_id, export_id)
 
     @app.websocket('/streams/replays/{session_id}')
     async def replay_control(websocket: WebSocket, session_id: str):

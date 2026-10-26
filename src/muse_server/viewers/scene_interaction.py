@@ -8,6 +8,7 @@ import numpy as np
 from mjviser.conversions import merge_geoms
 
 from muse_sdk.experiment import Pose
+from muse_sdk.recording_protocol import ReplayCamera
 from muse_sdk.view_protocol import EditGesture, SceneObject, ViewIntent
 from .scene_data import apply_body_poses, geom_rotations
 
@@ -27,6 +28,7 @@ class _ClientState:
     gizmo: object = None
     gesture_id: str | None = None
     delta: tuple | None = None
+    camera_initialized: bool = False
 
 
 def _quaternion(matrix):
@@ -39,10 +41,11 @@ class SceneInteraction:
     """每个 ViserServer 生命周期仅一个实例；Run 不传 revision/editable。"""
 
     def __init__(self, server, model, objects: list[SceneObject], *, view_id: str | None = None, emit,
-                 revision: int | None = None, editable: set[str] = frozenset()):
+                 revision: int | None = None, editable: set[str] = frozenset(), capture_camera: bool = False):
         self.server, self.model = server, model
         self.view_id, self.emit, self.revision = view_id, emit, revision
         self.editable = editable
+        self.capture_camera = capture_camera
         self._view_ids = set()
         self._lock = threading.RLock()
         self._closed = False
@@ -129,6 +132,15 @@ class SceneInteraction:
                 return
             state = _ClientState(client, False)
             self._clients[client.client_id] = state
+            if self.capture_camera:
+                @client.camera.on_update
+                def camera_updated(_):
+                    with self._lock:
+                        if self._closed or self._clients.get(client.client_id) is not state:
+                            return
+                        if not state.camera_initialized:
+                            state.camera_initialized = True
+                            self._emit_camera(state)
         message = None
         try:
             claim = client.local_storage.get_item('muse_view_id', timeout=5.0)
@@ -147,6 +159,25 @@ class SceneInteraction:
         if self.view_id is None:
             message['view_id'] = state.route
         self.emit(message)
+
+    def camera_ready(self, view_id: str) -> bool:
+        with self._lock:
+            clients = [s for s in self._clients.values() if s.paired and s.route == view_id]
+            return len(clients) == 1 and clients[0].camera_initialized
+
+    def _emit_camera(self, state):
+        if self.capture_camera and state.paired:
+            self._emit_view(state, {'kind': 'camera', 'ready': self.camera_ready(state.route)})
+
+    def camera_snapshot(self, view_id: str) -> ReplayCamera:
+        """仅配对且收到浏览器相机更新后，冻结公开属性；不探测未初始化属性。"""
+        with self._lock:
+            if not self.camera_ready(view_id):
+                raise ValueError('Replay camera requires one initialized paired client')
+            client = next(s.client for s in self._clients.values() if s.paired and s.route == view_id)
+            camera = client.camera
+            return ReplayCamera(position=tuple(camera.position), wxyz=tuple(camera.wxyz),
+                                fov=camera.fov, near=camera.near, far=camera.far)
 
     def _bind_client(self, state, *, initial=False, message=None):
         route = None
@@ -174,6 +205,7 @@ class SceneInteraction:
             self._focus(state.client.camera, None, state if interactive else None)
         self._emit_view(state, {'kind': 'pairing', 'client_id': state.client.client_id,
             'connected': True, 'paired': state.paired, 'message': message})
+        self._emit_camera(state)
 
     def set_view_ids(self, ids: list[str]) -> None:
         """Run 注册集合；只重配已读声明，不进行浏览器网络查询。"""
@@ -212,6 +244,7 @@ class SceneInteraction:
                 if not self._closed:
                     self._emit_view(state, {'kind': 'pairing', 'client_id': client.client_id,
                         'connected': False, 'paired': state.paired})
+                    self._emit_camera(state)
 
     def _object_pose(self, object_id):
         obj = self._objects[object_id]

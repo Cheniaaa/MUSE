@@ -11,7 +11,7 @@ import traceback
 
 import numpy as np
 
-from muse_sdk.replay_protocol import ReplayCommand, ReplayRequest, ReplayState
+from muse_sdk.replay_protocol import RecordingRequest, ReplayCommand, ReplayRequest, ReplayState
 
 
 class ReplayTimeline:
@@ -96,12 +96,18 @@ def main(argv=None):
     protocol_fd = os.dup(1)
     os.dup2(2, 1)
     protocol_lock = threading.Lock()
+    camera_dirty = threading.Event()
 
     def emit(message):
         data = (json.dumps(message, allow_nan=False) + '\n').encode()
         with protocol_lock:
             while data:
                 data = data[os.write(protocol_fd, data):]
+
+    def interaction_event(message):
+        if message['kind'] == 'view' and message['event']['kind'] == 'camera':
+            camera_dirty.set()
+        emit(message)
 
     reader = server = interaction = None
     try:
@@ -123,8 +129,10 @@ def main(argv=None):
         import viser
         model = load_model(directory / 'model.mjb', reader.manifest.model_sha256, reader.manifest.nbody)
         server = viser.ViserServer(host='127.0.0.1', port=0, verbose=False)
-        interaction = SceneInteraction(server, model, reader.objects, view_id=args.view_id, emit=emit)
+        interaction = SceneInteraction(server, model, reader.objects, view_id=args.view_id,
+                                       emit=interaction_event, capture_camera=True)
         timeline = ReplayTimeline(reader)
+        export_state = None
         objects = [obj.model_dump(mode='json', exclude={'body_id', 'geom_ids', 'local_position',
                                                        'local_orientation_matrix'}) for obj in reader.objects]
 
@@ -137,7 +145,8 @@ def main(argv=None):
                 last_command_seq=timeline.last_command_seq, playing=timeline.playing, speed=timeline.speed,
                 cursor={name: diagnostics[name] for name in ('world_id', 'sample_index', 'episode')},
                 worlds=reader.manifest.summary['worlds'], episodes=reader.manifest.episodes,
-                objects=objects, diagnostics=diagnostics)
+                objects=objects, diagnostics=diagnostics,
+                camera_ready=interaction.camera_ready(args.view_id), export=export_state)
             emit({'kind': 'state', 'state': state.model_dump(mode='json')})
 
         publish()
@@ -162,9 +171,34 @@ def main(argv=None):
                             interaction.apply_intent(ViewIntent.model_validate(message['intent']))
                         except ValueError as exc:
                             emit({'kind': 'view', 'event': {'kind': 'error', 'message': str(exc)}})
+                    elif message['kind'] == 'prepare_export':
+                        export_state = message['export']
+                        identity = export_state['export_id']
+                        try:
+                            request = RecordingRequest.model_validate(message['request'])
+                            reader.episode_samples(request.world_id, request.episode)
+                            camera = interaction.camera_snapshot(args.view_id)
+                        except ValueError as exc:
+                            emit({'kind': 'export_prepared', 'export_id': identity, 'error': str(exc)})
+                        else:
+                            emit({'kind': 'export_prepared', 'export_id': identity, 'error': None,
+                                  'directory': str(directory), 'request': request.model_dump(mode='json'),
+                                  'camera': camera.model_dump(mode='json')})
+                        timeline.revision += 1
+                        publish()
+                    elif message['kind'] == 'export_state':
+                        updated = message['export']
+                        if export_state is not None and updated['export_id'] == export_state['export_id']:
+                            export_state = updated
+                            timeline.revision += 1
+                            publish()
                     else:
                         raise ValueError('Unknown replay control: ' + message['kind'])
             if timeline.advance(time.monotonic()):
+                publish()
+            if camera_dirty.is_set():
+                camera_dirty.clear()
+                timeline.revision += 1
                 publish()
     except Exception as exc:
         # 进程边界保留根因并失败退出；不降级或继续播放损坏的数据。

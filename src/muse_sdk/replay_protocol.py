@@ -11,6 +11,14 @@ class ReplayRequest(DataModel):
     trajectory_artifact_id: str
 
 
+class RecordingRequest(DataModel):
+    world_id: int = Field(ge=0)
+    episode: int = Field(ge=0)
+    fps: float = Field(gt=0)
+    width: int = Field(gt=0, multiple_of=2)
+    height: int = Field(gt=0, multiple_of=2)
+
+
 class ReplayCommand(DataModel):
     command_seq: int = Field(gt=0)
     kind: Literal['play', 'pause', 'seek', 'step', 'speed', 'world', 'episode']
