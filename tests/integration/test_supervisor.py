@@ -104,6 +104,8 @@ def test_terminal_and_exit_priority_with_native_logs(tmp_path, behavior, state, 
         record = wait_for(lambda: (r if (r := supervisor.get_run(plan.run_id))['state'] in TERMINAL_STATES else None))
         assert record['state'] == state
         assert record['exit_code'] == exit_code
+        assert record['recording']['status'] == 'disabled'
+        assert record['recording']['config'] is None
         log = Path(plan.artifact_directory, 'logs/worker.log').read_text()
         assert 'not JSON native stdout' in log and 'native stderr' in log
         events = supervisor.events(plan.run_id)

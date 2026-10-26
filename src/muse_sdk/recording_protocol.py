@@ -39,6 +39,38 @@ class TrajectoryArtifact(DataModel):
     summary: dict
 
 
+class ReplayCamera(DataModel):
+    position: tuple[float, float, float]
+    wxyz: tuple[float, float, float, float]
+    fov: float
+    near: float
+    far: float
+
+
+class RecordingMetadata(DataModel):
+    source_trajectory_id: str
+    world_id: int
+    episode: int
+    first_sample_index: int
+    last_sample_index: int
+    complete_episode: bool
+    camera: ReplayCamera
+    fps: float
+    width: int
+    height: int
+    frame_count: int
+
+
+class RecordingArtifact(DataModel):
+    id: str
+    run: str
+    kind: Literal['recording'] = 'recording'
+    path: str
+    size: int = Field(gt=0)
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    metadata: RecordingMetadata
+
+
 class TrajectoryField(DataModel):
     name: Literal['xpos', 'xmat', 'velocity_world', 'angular_velocity_body', 'present', 'alive',
         'controllable', 'crashed', 'action_motion', 'action_power_w', 'action_channel', 'reward',

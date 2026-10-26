@@ -1,4 +1,5 @@
 """单GPU进程队列。SQLite持久状态，pipe持续drain，终态等待EOF和exit。"""
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from copy import deepcopy
 import fcntl
 import hashlib
@@ -14,10 +15,11 @@ import threading
 import time
 
 from muse_sdk.experiment import RunPlan
+from muse_sdk.recording_protocol import RecordingArtifact, RecordingState, TrajectoryArtifact
 from muse_sdk.run_protocol import (CheckpointArtifact, CommandResult, InteractiveCommand,
                                    WorkerControl, WorkerEvent, preview_socketpair)
 from .display import DisplaySession
-from .storage import verify_checkpoint_file
+from .storage import verify_checkpoint_file, verify_recorded_file
 
 TERMINAL_STATES = frozenset(('COMPLETED', 'CANCELLED', 'FAILED', 'LOST'))
 
@@ -56,6 +58,8 @@ class Supervisor:
         self._selector = selectors.DefaultSelector()
         self._fatal = None
         self._displays = {}
+        self._verification = None
+        self._publications = {}
         self.access_host, self.viewer_port = access_host, viewer_port
 
     def _display(self, run_id):
@@ -129,6 +133,7 @@ class Supervisor:
                     self._save(record)
                 if record['state'] == 'LOST' and record['pid'] is not None:
                     self._lost.append(record)
+            self._verification = ThreadPoolExecutor(max_workers=1, thread_name_prefix='muse-file-verification')
             self._thread = threading.Thread(target=self._loop, name='muse-supervisor', daemon=True)
             self._thread.start()
         return self
@@ -184,6 +189,8 @@ class Supervisor:
             record = dict(run_id=plan.run_id, experiment_id=plan.experiment_id, state='QUEUED',
                           mode=plan.mode, max_decision_steps=plan.max_decision_steps,
                           checkpoint=plan.checkpoint.model_dump(mode='json') if plan.checkpoint else None,
+                          recording=RecordingState(status='capturing' if plan.recording else 'disabled',
+                              config=plan.recording).model_dump(mode='json'),
                           viser_log_started=False,
                           device=plan.device, pid=None, pgid=None, process_start=None,
                           plan_path=str(Path(plan.artifact_directory) / 'resolved_run_plan.json'),
@@ -291,6 +298,80 @@ class Supervisor:
     def artifacts(self, run_id):
         return self.get_run(run_id)['artifacts']
 
+    def publish_recorded_artifact(self, artifact: TrajectoryArtifact | RecordingArtifact) -> Future[dict]:
+        """只读文件校验在后台；返回值只在监督线程完成持久登记后成功。"""
+        with self._lock:
+            if self._thread is None or self._fatal:
+                raise RuntimeError('Supervisor is not accepting publications')
+            active = self._active
+            record = (active['record'] if active is not None and active['record']['run_id'] == artifact.run
+                      else self.get_run(artifact.run))
+            if artifact.kind == 'trajectory':
+                if (active is None or active['record']['run_id'] != artifact.run
+                        or active['plan'].recording is None or active.get('trajectory') is not None):
+                    raise ValueError('Unexpected or duplicate trajectory publication')
+            publication = Future()
+            verification = self._verification.submit(verify_recorded_file, artifact, artifact.run,
+                                                       Path(record['artifact_directory']))
+            self._publications[publication] = (verification, artifact)
+            if artifact.kind == 'trajectory':
+                active['trajectory'] = publication
+                record['recording'].update(status='publishing', summary=artifact.summary)
+                self._save(record)
+            verification.add_done_callback(lambda _: self._wake.set())
+            self._wake.set()
+            return publication
+
+    def cancel_recorded_artifact(self, publication: Future[dict]) -> bool:
+        """取消登记不代表读线程退出；锁外等待后才允许调用方清理文件。"""
+        with self._lock:
+            cancelled = publication.cancel()
+            pending = self._publications.get(publication)
+            self._wake.set()
+        if pending is not None:
+            wait((pending[0],))
+        if not cancelled:
+            # 这里只同步退出；登记/校验异常仍由原 publication 结果呈现。
+            wait((publication,))
+        return cancelled
+
+    def _complete_publications(self):
+        for publication, (verification, artifact) in list(self._publications.items()):
+            if not verification.done():
+                continue
+            del self._publications[publication]
+            if not publication.set_running_or_notify_cancel():
+                continue
+            try:
+                verification.result()
+            except (ValueError, OSError) as exc:
+                if artifact.kind == 'trajectory':
+                    active = self._active
+                    if active.get('finishing') or active['process'].poll() is not None:
+                        record = active['record']
+                        record['failure'] = record['failure'] or str(exc)
+                        self._recording_failed(record, str(exc))
+                        self._save(record)
+                    else:
+                        self._fail(str(exc))
+                publication.set_exception(exc)
+                continue
+            active = self._active
+            record = (active['record'] if active is not None and active['record']['run_id'] == artifact.run
+                      else self.get_run(artifact.run))
+            data = artifact.model_dump(mode='json')
+            record['artifacts'].append(data)
+            if artifact.kind == 'trajectory':
+                record['recording'].update(status='published', summary=artifact.summary,
+                                           artifact_id=artifact.id, error=None)
+            self._save(record)
+            publication.set_result(deepcopy(data))
+
+    def _recording_failed(self, record, message):
+        recording = record['recording']
+        if recording['status'] not in ('disabled', 'published'):
+            recording.update(status='failed', error=recording['error'] or message)
+
     def _terminal_event(self, record):
         return dict(event_seq=record['event_seq'], run_id=record['run_id'], kind='terminal',
                     sim_time=record['sim_time'], wall_time=record['finished_at'],
@@ -298,6 +379,7 @@ class Supervisor:
                                  failure=record['failure'], **record['metrics']))
 
     def _publish_terminal(self, record):
+        self._recording_failed(record, record['failure'] or 'Run ended before trajectory publication')
         if record['run_id'] in self._displays:
             self._displays[record['run_id']].release()
         record['event_seq'] += 1
@@ -371,6 +453,7 @@ class Supervisor:
         active = self._active
         record = active['record']
         record['failure'] = record['failure'] or message
+        self._recording_failed(record, message)
         if active['stop_at'] is None:
             record['state'] = 'STOPPING'
             self._signal(record, signal.SIGTERM)
@@ -394,6 +477,7 @@ class Supervisor:
         record.update(event_seq=event.event_seq, sim_time=event.sim_time)
         if event.kind == 'failure':
             record['failure'] = record['failure'] or str(event.payload.get('message', event.payload))
+            self._recording_failed(record, record['failure'])
         elif event.kind == 'terminal':
             if record['worker_terminal'] is not None:
                 raise ValueError('Duplicate terminal')
@@ -403,6 +487,7 @@ class Supervisor:
             record['metrics'].update({k: event.payload[k] for k in ('steps', 'updates') if k in event.payload})
             if event.payload['state'] == 'FAILED':
                 record['failure'] = record['failure'] or 'Worker terminal FAILED'
+                self._recording_failed(record, record['failure'])
         elif event.kind in ('preparing', 'compiling', 'running'):
             if not record['cancel_requested'] and active['stop_at'] is None:
                 record['state'] = event.kind.upper()
@@ -419,6 +504,19 @@ class Supervisor:
             artifact = CheckpointArtifact.model_validate(event.payload)
             verify_checkpoint_file(artifact, record['run_id'], record['artifact_directory'])
             record['artifacts'].append(artifact.model_dump(mode='json'))
+        elif event.kind == 'recording_state':
+            state = RecordingState.model_validate(event.payload)
+            if state.status not in ('capturing', 'publishing', 'failed') or active['plan'].recording is None:
+                raise ValueError('Invalid Worker recording state')
+            if record['recording']['status'] != 'published':
+                record['recording'] = state.model_dump(mode='json')
+            if state.status == 'failed':
+                self._fail(state.error or 'Recording failed')
+        elif event.kind == 'trajectory':
+            artifact = TrajectoryArtifact.model_validate(event.payload)
+            if artifact.run != record['run_id']:
+                raise ValueError('Invalid trajectory run identity')
+            self.publish_recorded_artifact(artifact)
         elif event.kind == 'command_result':
             record['interaction']['result'] = result.model_dump(mode='json')
             if event.run_id in self._displays:
@@ -463,6 +561,7 @@ class Supervisor:
                 self._fail('Worker protocol line exceeds 1 MiB')
 
     def _tick(self):
+        self._complete_publications()
         for session in self._displays.values():
             session.tick()
         self._reap_lost()
@@ -516,6 +615,8 @@ class Supervisor:
 
     def _finish_active(self):
         active = self._active
+        if active.get('trajectory') in self._publications:
+            return
         record, code = active['record'], active['process'].returncode
         record['exit_code'] = code
         terminal = record['worker_terminal']
@@ -533,6 +634,9 @@ class Supervisor:
         else:
             record['state'] = 'FAILED'
             record['failure'] = 'Unrequested cancellation'
+        if record['state'] == 'COMPLETED' and record['recording']['status'] not in ('disabled', 'published'):
+            record.update(state='FAILED', failure=record['recording']['error'] or
+                          'Worker exited before trajectory publication')
         self._publish_terminal(record)
         self._index_artifacts(record)
         self._save(record)
@@ -556,7 +660,7 @@ class Supervisor:
             while True:
                 with self._lock:
                     self._tick()
-                    if self._closing and self._active is None and not self._lost:
+                    if self._closing and self._active is None and not self._lost and not self._publications:
                         return
                 self._wake.wait(.01)
                 self._wake.clear()
@@ -575,6 +679,7 @@ class Supervisor:
         self._thread.join()
         if self._fatal:
             raise RuntimeError(f'Supervisor shutdown unconfirmed: {self._fatal}')
+        self._verification.shutdown(wait=True)
         self._selector.close()
         for session in self._displays.values():
             session.close()

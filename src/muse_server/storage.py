@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import yaml
 
 from muse_sdk.config import ConfigError, check_json
+from muse_sdk.recording_protocol import RecordingArtifact, TrajectoryArtifact
 
 
 def verify_checkpoint_file(artifact, run_id: str, directory: Path) -> Path:
@@ -35,6 +36,34 @@ def verify_checkpoint_file(artifact, run_id: str, directory: Path) -> Path:
             raise ValueError('Checkpoint sha256 mismatch')
     except OSError as exc:
         raise ValueError(f'Checkpoint file validation failed: {exc}') from exc
+    return path
+
+
+def verify_recorded_file(artifact: TrajectoryArtifact | RecordingArtifact, run_id: str, directory: Path) -> Path:
+    """发布/引用边界核验轨迹与录像；内容格式由 reader/编码器负责。"""
+    if artifact.kind not in ('trajectory', 'recording'):
+        raise ValueError('Invalid recorded artifact kind')
+    folder, suffix = ('trajectories', 'zip') if artifact.kind == 'trajectory' else ('recordings', 'mp4')
+    prefix = f'{run_id}:{artifact.kind}:'
+    token = artifact.id.removeprefix(prefix)
+    if (artifact.run != run_id or not artifact.id.startswith(prefix)
+            or re.fullmatch(r'[0-9a-f]{32}', token) is None):
+        raise ValueError('Invalid recorded artifact run/ID identity')
+    if artifact.path != f'{folder}/{token}.{suffix}':
+        raise ValueError('Invalid recorded artifact path; expected final relative file')
+    try:
+        root = Path(directory).resolve()
+        path = (root / artifact.path).resolve()
+        if not path.is_relative_to(root / folder):
+            raise ValueError('Recorded artifact path outside allocated directory')
+        if not path.is_file() or path.stat().st_size != artifact.size:
+            raise ValueError('Recorded artifact file missing or size mismatch')
+        with path.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if digest != artifact.sha256:
+            raise ValueError('Recorded artifact sha256 mismatch')
+    except OSError as exc:
+        raise ValueError(f'Recorded artifact file validation failed: {exc}') from exc
     return path
 
 
