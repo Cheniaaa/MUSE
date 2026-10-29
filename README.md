@@ -1,78 +1,180 @@
 # Muse
 
-通过 Server 的正式 HTTP API 注册 Experiment、提交 Run 和读取 artifacts。示例脚本复用生产 Worker 与唯一 driver。
+**面向多无人机与异构机器人协同研究的 GPU 仿真与强化学习平台。**
 
-UAV＋UGV同world、不同动作/观测维度的使用方式见 [异构IPPO示例](examples/heterogeneous/README.md)，物理、学习和恢复证据见 [M2.1验收报告](docs/validation/m2-heterogeneous.md)。
+Muse 将实验配置、并行仿真、策略学习和结果复盘串联在同一条运行链路中。研究者通过 Python 研究包定义任务与算法，通过 HTTP API 或桌面工作台配置实验、提交运行、观察场景并分析结果。
 
-局部actor＋集中critic的合作训练见 [MAPPO示例](examples/cooperative_mappo/README.md)：支持同role参数共享开关、GRU/LSTM、显式world team reward和Task学习边界。[M2.2验收报告](docs/validation/m2-mappo.md)记录真实GPU与HTTP恢复证据。
+本仓库提供 **SDK、Server、Runtime 和参考示例**；配套桌面客户端见 [MUSE-GUI](https://github.com/Cheniaaa/MUSE-GUI)。
 
-M4.3三参考场景已完成工程交付：[普通飞行](examples/basic_flight/README.md)、[ISAC＋cost](examples/isac_cost/README.md)、[history＋Markov](examples/hybrid_history_markov/README.md)，沿同一HTTP/Worker/checkpoint路径。混合动作和历史机制、真实训练／恢复／冻结评价已验证；ISAC策略仍未达到无飞行失败要求，完整学习对照矩阵未完成。2026-10-16经用户确认，学习优化与剩余效果验证转入后续研究／M6，状态见[交付记录](docs/validation/m4-reference-scenarios.md)。`examples/reference_benchmark.py`保留为可选研究矩阵入口。
+## 核心能力
 
-M2跨阶段审查的四项问题已完成有限修复，当前配置及学习state快照契约见 [收口验收报告](docs/validation/m2-complexity-cleanup.md)。
+| 能力 | 说明 |
+|---|---|
+| 并行与异构仿真 | 基于 mjlab / MuJoCo Warp，在多个 world 中运行 UAV、UGV 等实体，支持不同角色的动作与观测维度 |
+| 多智能体学习 | IPPO、MAPPO、参数共享、GRU / LSTM，以及命名 cost 与约束学习组件 |
+| 可扩展研究任务 | 通过研究包声明 Task、Term、Algorithm 及 radio / sensing 模型，组合普通飞行、无线通信与感知场景 |
+| 实验与运行管理 | 资源版本、冻结实验配置、单 GPU 运行队列、checkpoint 恢复、指标与日志查询 |
+| 实时观察与交互 | 浏览器 Viser 和官方 MuJoCo Native 窗口；INTERACTIVE 模式支持暂停、继续、单步和指定 world reset |
+| 轨迹与结果复盘 | 独立诊断轨迹采集、历史三维回放、同样本状态与动作诊断，以及基于已有轨迹的 MP4 导出 |
 
-## 启动与训练
+## 架构
 
-在 `/project/mjc_ws` 执行，所有 Python 命令先激活项目环境。使用新的 data-dir 保存当前资源 revision：
-
-```bash
-source /project/mjc_ws/.myenv/bin/activate
-PYTHONDONTWRITEBYTECODE=1 python -m muse_server.app --port 8001 --data-dir /project/muse-data/workbench-v2
+```text
+桌面 GUI / HTTP 客户端
+          │ HTTP / WebSocket
+     Muse Server ── 资源、实验、队列与持久结果
+          │
+     Run Worker ─── MuseEnv + driver + Algorithm
+          ├─ GPU 并行仿真与学习
+          ├─ 只读快照 → 实时 Viser / Native
+          └─ 诊断轨迹 → 历史回放 / MP4
 ```
 
-另一个终端激活同一环境后提交训练：
+- **Experiment** 是解析后冻结的实验配置；**Run** 是一次有明确模式、预算和输出选择的执行。
+- Worker 持有唯一仿真推进循环；显示、回放和视频进程不推进物理，也不重新执行策略。
+- 研究者编写研究逻辑，平台负责配置解析、调度、reset、数据采集和产物管理。研究包会执行 Python 代码，请仅加载可信来源。
+
+## 环境要求
+
+| 项目 | 当前基线 |
+|---|---|
+| 后端平台 | Linux，当前目标环境为 Ubuntu 24.04 / WSL2；单主机、单 NVIDIA GPU |
+| Python | 3.12，项目基线为 3.12.3 |
+| 物理与学习 | mjlab 1.6.0、MuJoCo / MuJoCo Warp 3.11.0、PyTorch 2.11.0 + CUDA 12.8、RSL-RL 5.4.2 |
+| 可视化 | Viser；Native 窗口与当前软件 MP4 导出路径需要可用的显示服务，如 WSLg |
+| 依赖安装 | [uv](https://docs.astral.sh/uv/getting-started/installation/)；完整固定依赖见 [requirements.lock](requirements.lock) |
+
+GPU 仿真需要可用的 NVIDIA 驱动和 CUDA 环境，不提供 CPU 物理回退。同一 Server 同时执行一个 GPU Run，其余请求排队。
+
+## 快速开始
+
+### 1. 安装后端
+
+准备 Git、Python 3.12 和 uv，在 Linux / WSL 终端执行：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python examples/basic_flight/submit.py --mode TRAIN --max-decision-steps 2400 --checkpoint-interval-updates 25 --no-display
+git clone https://github.com/Cheniaaa/MUSE.git
+cd MUSE
+python3.12 -m venv .myenv
+source .myenv/bin/activate
+uv pip install --python .myenv/bin/python --require-hashes --torch-backend cu128 -r requirements.lock
+uv pip install --python .myenv/bin/python --no-deps -e .
 ```
 
-输出包含 `experiment_id`、`run_id` 与 `run_url`。`--no-display` 提交后立即返回；默认尝试打开该 Run 的显示服务。`max-decision-steps` 是本次 Run 的正整数决策步数上限，每步同时推进所有 world。TRAIN 每收满 Experiment 中的 `collection_steps=H`（示例默认 24）才更新一次。预算不足 H 时正常结束但更新次数为 0；非整块尾段不更新，也不保存进 checkpoint，恢复时从新 episode 开始。
+已有环境可直接激活，无需重复安装。后续命令均在仓库根目录和该环境中执行。
 
-## 桌面研究工作台
+### 2. 启动 Server
 
-Windows GUI 工程位于 `E:/Projects/Python/03_Work/Lab/MUSE`，激活其 `.venv` 后以 `python -m muse_gui` 启动。首次在设置页填写 WSL 项目、环境和数据目录，或连接已启动的 Server；GUI 使用 API revision 2。草稿、资源 revision、CPU 场景预览、Run 控制与持久结果通过同一 HTTP/WS 控制面交互。
+```bash
+python -m muse_server.app \
+  --host 127.0.0.1 \
+  --port 8001 \
+  --viewer-port 8081 \
+  --data-dir "$HOME/.local/share/muse/catalog"
+```
 
-关闭 GUI 只释放该客户端和 CPU 草稿预览，后台 Run 继续。设置页“停止本机后端”是独立操作，会取消活动 Run 并保留排队项；CLI 身份查询入口为 `python -m muse_server.local_backend status --data-dir <目录>`。使用新数据目录，旧研究产物不迁移。操作说明见 GUI README，工程验收状态与原始证据见[研究工作台验收记录](docs/validation/m5-research-workbench.md)。
+`--data-dir` 保存资源版本、实验、运行记录和产物；首次使用请指定新目录，后续启动使用同一目录。平台版本不兼容时使用独立目录，不覆盖或自动迁移旧研究数据。默认仅监听本机，请勿将研究服务直接暴露到公网。
 
-## 研究包声明与选择
+Server 启动后，交互式 API 文档位于 **http://127.0.0.1:8001/docs**。
 
-SDK声明版本为`0.2`。`training_package.yaml`以`compositions`保存完整的平面命名组合，并用`default_composition_id`指定默认项。请求通过`composition_id`选择组合；Task和Algorithm由组合确定，冻结Experiment保留实际`task_id/algorithm_id`。
+### 3. 提交基础飞行训练
 
-组合的`model_bindings`按radio/sensing声明`default`及`options`，每个候选包含自己的推荐`config`。请求用`model_choices`选择已声明实现，用`model_config`覆盖该实现参数；选择模型本身不会启用未声明的研究功能。
+另开终端，进入同一仓库并激活环境：
 
-ISAC同一包提供`mappo_cost_on`、`mappo_cost_off`、`ippo`，不同reward/critic/cost结构在包中明确声明。history包使用`ippo`，历史长度通过selection覆盖；其他现有单组合示例使用`default`。使用新数据目录登记这些声明，历史目录与旧研究产物保留。
+```bash
+source .myenv/bin/activate
+python examples/basic_flight/submit.py \
+  --server http://127.0.0.1:8001 \
+  --mode TRAIN \
+  --max-decision-steps 2400 \
+  --checkpoint-interval-updates 25
+```
 
-## 查询 checkpoint 并恢复
+脚本通过正式 API 上传资源、保存 Experiment 并提交 Run，输出 `experiment_id`、`run_id`、`run_url` 和就绪后的 Viser 地址。追加 `--no-display` 可跳过显示请求，提交后立即返回；Run 在后台继续。
 
-将下面占位符替换为实际 ID。先查询 Run 状态及 artifacts：
+`max_decision_steps` 是整个 Run 的决策步数上限，一步同时推进全部 world，不乘 world 数，也不计内部物理子步。TRAIN 每收满 `collection_steps=H` 才更新一次；不足一个完整 block 的尾段不更新，也不进入 checkpoint。
+
+如需可视化编辑、运行管理和历史回放，请安装 [桌面工作台](https://github.com/Cheniaaa/MUSE-GUI)。关闭 GUI 不会取消后台 Run。
+
+## 参考示例
+
+所有示例沿相同的 Server / Worker / checkpoint 链路运行，不另建训练循环。
+
+| 示例 | 内容 |
+|---|---|
+| [Basic Flight](examples/basic_flight/README.md) | Crazyflie 规则飞行、IPPO 训练与 checkpoint 使用 |
+| [Heterogeneous](examples/heterogeneous/README.md) | UAV + UGV 同 world，不同角色的动作与观测布局 |
+| [Cooperative MAPPO](examples/cooperative_mappo/README.md) | 局部 actor、集中 critic、团队奖励与循环网络 |
+| [ISAC + Cost](examples/isac_cost/README.md) | 运动、功率与信道混合动作，以及命名 cost |
+| [History + Markov](examples/hybrid_history_markov/README.md) | 历史观测与混合动作研究配置 |
+| [IMU](examples/imu_flight/README.md) / [Rangefinder](examples/rangefinder_flight/README.md) | 飞行传感器接入与观测 |
+| [Indoor Radio](examples/indoor_radio_reference/README.md) / [Sensing](examples/sensing_reference/README.md) | 室内无线与感知参考场景 |
+
+研究包在 `training_package.yaml` 中通过 `compositions` 声明任务、算法和模型组合；请求通过 `composition_id`、`model_choices` 及配置覆盖选择研究设置。选择模型不会自动启用未声明的功能。
+
+## Checkpoint 与运行模式
+
+| 模式 | 行为 |
+|---|---|
+| `TRAIN` | 采集 transition 并更新算法；正常结束或安全取消时保存学习 checkpoint，可配置周期保存 |
+| `EVALUATE` | 学习策略从 checkpoint 执行确定性动作，不更新学习状态、不生成新 checkpoint；规则策略无需 checkpoint |
+| `INTERACTIVE` | 冻结策略运行，并提供暂停、继续、全 world 单步和指定 world reset；学习策略需要 checkpoint |
+
+查询状态与已登记产物，下面的 ID 均需替换为实际值：
 
 ```bash
 curl http://127.0.0.1:8001/runs/RUN_ID
 curl http://127.0.0.1:8001/runs/RUN_ID/artifacts
 ```
 
-从列表选择 `kind` 为 `checkpoint` 的条目，使用其完整 `id`（形如 `RUN_ID:checkpoint:UUID`），而非 kind 或本地文件路径。条目包含 `size` 和 `sha256`；下载使用 `GET /runs/RUN_ID/artifacts/ARTIFACT_ID`。只有 Server 已登记的文件可恢复。
+从列表选择 `kind=checkpoint` 条目的完整 `id`，复用原 Experiment 恢复训练或评价：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python examples/basic_flight/submit.py --experiment-id EXP_ID --mode TRAIN --checkpoint-artifact-id ARTIFACT_ID --max-decision-steps 2400 --no-display
-PYTHONDONTWRITEBYTECODE=1 python examples/basic_flight/submit.py --experiment-id EXP_ID --mode EVALUATE --checkpoint-artifact-id ARTIFACT_ID --max-decision-steps 500 --no-display
+python examples/basic_flight/submit.py --experiment-id EXP_ID --mode TRAIN --checkpoint-artifact-id ARTIFACT_ID --max-decision-steps 2400 --no-display
+python examples/basic_flight/submit.py --experiment-id EXP_ID --mode EVALUATE --checkpoint-artifact-id ARTIFACT_ID --max-decision-steps 500 --no-display
 ```
 
-三个 Run 可复用同一个 `EXP_ID`。`--experiment-id` 跳过上传与解析，保留原资源 revision；`--checkpoint-artifact-id` 必须与它同时提供。恢复保留 actor、critic、optimizer、learner RNG 与累计学习进度；新 Run 的 steps/updates 从 0 开始，环境从新 episode 开始，不恢复物理状态或半段 rollout。
+恢复保留网络、optimizer、learner RNG 和累计学习进度，但环境从新 episode 开始，不恢复历史物理状态或半段 rollout。只有 Server 已发布并登记的 checkpoint 可用于恢复；失败或强制退出不保证未发布数据。
 
-`--checkpoint-interval-updates N` 仅用于 TRAIN，每 N 次成功 update 发布独立 checkpoint。省略时仍在正常结束或安全取消时保存；终点可与最后一次周期保存具有相同学习进度。失败或强制退出仅保留此前已发布并登记的文件。
+## 诊断轨迹、历史回放与视频
 
-学习 EVALUATE 必须提供 checkpoint，执行确定性动作并冻结学习状态，不产生新 checkpoint，预算无需按 collection_steps 整除。不给 `--experiment-id` 的 `--mode EVALUATE` 仍上传原规则算法示例，无需 checkpoint。
+录制是 Run 的可选输出，与实时显示独立。在 GUI 运行参数中配置，或向 `POST /runs` 提供 `recording`：
 
-取消在decision/update安全边界优先停止；即使刚收满H步，只要尚未开始update，也会停止并保存此前已完成的学习状态。尚未更新的rollout不进入checkpoint。已经开始的update在返回后处理取消。
-
-算法扩展的 `learning_state_dict()` 可返回借用参数/Adam tensor的普通state dict。Runtime在发布时生成一次独立CPU快照；直接调用该hook并需要跨后续更新保留基准时，应显式调用 `muse_runtime.checkpoint.snapshot_learning_state(...)`。
-
-## Checkpoint 验证
-
-CPU 边界测试位于 `tests/unit/test_checkpoint_contract.py`、`tests/unit/test_checkpoint_io.py` 与 `tests/integration/test_checkpoint.py`。真实 GPU 验收应串行执行：
-
-```bash
-MUSE_TEST_GPU=1 PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/gpu/test_checkpoint_learning.py tests/gpu/test_flight_learning.py tests/integration/test_checkpoint.py::test_real_gpu_checkpoint_roundtrip
+```json
+{
+  "experiment_id": "REGISTERED_EXPERIMENT_ID",
+  "mode": "TRAIN",
+  "max_decision_steps": 2400,
+  "recording": {
+    "world_ids": [0],
+    "every_n_decisions": 3,
+    "max_data_bytes": 16777216
+  }
+}
 ```
 
-GPU 测试覆盖 B2→B1 的学习状态恢复、新 episode、跨 timeout 的冻结评估，以及内置 IPPO/包内 CustomIPPO 的 HTTP TRAIN→恢复 TRAIN→EVALUATE。集成 GPU 用例默认跳过，需显式设置 `MUSE_TEST_GPU=1`。当前验收结果见 [M2.4 验收报告](docs/validation/m2-checkpoint.md)。
+- **采集**：按所选 world 和 decision 间隔保存刚体位姿、速度、策略动作、reward、已启用 cost 及结束原因，并保留初态、终止和 reset 边界。`recording=null` 关闭录制。
+- **存档**：轨迹使用 ZIP + JSON + NumPy NPY，包含冻结模型、配置和对象映射。容量预算针对未压缩动态数组，不是最终文件大小；耗尽后封存已有前缀，Run 继续。
+- **复盘**：GUI 读取已发布轨迹，支持 world / episode 切换、前后定位和同样本诊断；Run 结束或 Server 重启后可重新打开，回放时 Server 必须在线。
+- **导出**：从同一轨迹选择一个 world / episode，冻结相机、FPS 和分辨率后生成 MP4，无需重新运行仿真。视频帧率不会补出未采集的运动细节；稀疏 reward / cost 也不是区间累计值。
+
+checkpoint 用于恢复学习，trajectory 用于保存运行历史，MP4 用于展示，三者不能互相替代。录制不包含完整 observation、原始传感器 / 无线矩阵或每个物理子步的数据。
+
+## 项目结构
+
+| 目录 | 职责 |
+|---|---|
+| [src/muse_sdk](src/muse_sdk) | 配置、研究声明、运行协议和轨迹格式 |
+| [src/muse_runtime](src/muse_runtime) | 环境装配、物理与学习调度、checkpoint 和采集 |
+| [src/muse_server](src/muse_server) | HTTP / WebSocket、资源、队列、显示与历史会话 |
+| [src/muse_builtins](src/muse_builtins) | 内置控制器、算法、模型、计算项和资产 |
+| [examples](examples) | 参考研究包与提交入口 |
+
+## 当前边界
+
+Muse 仍在研究开发中。已有能力包括训练、恢复、冻结评价、交互调试、实时显示、轨迹回放和视频导出，但这不等于全部场景的科学验证或策略收敛。
+
+- 当前只支持单主机、单 NVIDIA GPU，不提供分布式训练或多 GPU 调度。
+- ISAC 参考策略尚未达到无飞行失败目标，完整多 seed / 算法对照及 history 学习收益验证尚未完成。
+- 交互接口当前不提供外部逐实体动作注入；messaging 及部分传感器扩展仍未完成。
+- 当前 MP4 路径依赖可用显示服务，不承诺无显示服务的纯 headless 视频导出；既有小场景结果不代表通用吞吐或显存上限。
